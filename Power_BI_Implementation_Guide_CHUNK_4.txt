@@ -1,0 +1,1168 @@
+================================================================================
+POWER BI CHURN ANALYSIS: COMPREHENSIVE IMPLEMENTATION GUIDE
+CHUNK 4 - BEHAVIORAL & ENGAGEMENT ANALYSIS (QUESTIONS 7–9)
+================================================================================
+
+DOCUMENT VERSION: 1.0
+DATE: February 2026
+SCOPE: Questions 7–9 (Tenure Lifecycle, Usage Correlation, Support Quality)
+COMPLEXITY: Intermediate-Advanced—introduces behavioral segmentation & trend analysis
+
+================================================================================
+EXECUTIVE SUMMARY - CHUNK 4
+================================================================================
+
+This chunk implements behavioral and engagement metrics that are most predictive
+of imminent churn:
+- Question 7: How does customer tenure influence churn rate? (lifecycle stages)
+- Question 8: How does usage level correlate with churn risk? (engagement signal)
+- Question 9: Are support ticket volumes a churn indicator? (satisfaction proxy)
+
+These questions enable:
+- Lifecycle-based retention strategies (different playbooks per stage)
+- Early warning systems (usage drops = churn alert)
+- Support quality monitoring and CS team performance tracking
+
+Key Insight: Questions 7–9 are highest-value for PROACTIVE intervention.
+  Usage decline detects at-risk customers 30–60 days before churn.
+  Support quality is often the CAUSE of churn (root cause, not symptom).
+  Tenure reveals when intervention timing matters most (early days are critical).
+
+DELIVERABLES:
+1. Tenure bucketing and calculated columns (Power Query)
+2. Eight DAX measures (tenure, usage, support metrics)
+3. Four visuals (scatter, box plot, area chart, detailed table)
+4. New report page: "Behavioral & At-Risk Indicators Dashboard"
+5. Early warning signal setup (foundation for Chunk 6 alerts)
+6. Playbook recommendations per lifecycle stage
+
+ESTIMATED EFFORT: Medium-High (6–8 hours including advanced visuals and measures)
+
+================================================================================
+SECTION 1: DATA REQUIREMENTS & PREPROCESSING (Q7–Q9)
+================================================================================
+
+1.1 DATA SOURCES & COLUMNS
+
+For Q7 (Tenure Lifecycle):
+  Source: fact_customer_churn
+  Columns Required:
+    - Tenure_Months (numeric): Customer tenure in months at analysis date
+      OR: Join_Date (date) + Report_Month (date) to calculate tenure
+    - Churn_Flag
+    - Customer_ID
+    - Report_Month
+  
+  Calculation (if Tenure_Months not present):
+    Tenure_Months = MONTH(Report_Month) - MONTH(Join_Date) + (YEAR(Report_Month) - YEAR(Join_Date)) * 12
+    OR in Power BI: DATEDIF([Join_Date], [Report_Month], "M")
+
+  Data Quality:
+    - Tenure_Months: Non-negative, typically 0–60 range
+    - No nulls expected
+    - Consistent: All customers in same Report_Month have consistent tenure
+
+For Q8 (Usage Engagement):
+  Source: fact_customer_churn
+  Columns Required:
+    - Monthly_Usage (numeric): Usage metric (e.g., transactions, API calls, feature uses)
+    - Avg_Usage_Last_3_Months (numeric, optional): Rolling average for trend
+    - Usage_Change (numeric, optional): Month-over-month change %, derived
+    - Usage_Score (numeric, 1–100 scale, optional alternative to Monthly_Usage)
+    - Churn_Flag
+    - Customer_ID
+  
+  Calculation (if Usage_Change missing):
+    Usage_Change = (Current_Month_Usage - Prior_Month_Usage) / Prior_Month_Usage
+    This indicates engagement trend (positive = growing, negative = declining)
+  
+  Data Quality:
+    - Monthly_Usage: Non-negative, realistic ranges (0–10,000 typical)
+    - No extreme outliers (>99th percentile reviewed)
+    - Missing/null values: Fill with 0 (inactive) or average (see Chunk 2)
+
+For Q9 (Support Quality):
+  Source: fact_customer_churn
+  Columns Required:
+    - Support_Tickets (numeric): Count of support tickets in period
+    - Complaint_Flag (Yes/No): Whether complaint was raised
+    - Satisfaction_Score (numeric, 1–5 scale): CSAT or NPS proxy
+    - Resolution_Time_Days (numeric, optional): Average days to resolve ticket
+    - Churn_Flag
+    - Customer_ID
+  
+  Data Quality:
+    - Support_Tickets: Count, 0–20 typical (high outliers = troubled accounts)
+    - Satisfaction_Score: 1–5 only; no blanks (fill with median if missing)
+    - Resolution_Time: Days, 0–30 typical
+
+1.2 POWER QUERY PREPROCESSING
+
+STEP 1: CREATE TENURE BUCKETS (if not present)
+
+In Power Query Editor:
+
+  1. Add Column > Conditional Column
+  2. Name: "Tenure_Bucket"
+  3. Formula:
+     
+     if [Tenure_Months] is null then "Unknown"
+     else if [Tenure_Months] <= 3 then "0–3 months (New)"
+     else if [Tenure_Months] <= 6 then "4–6 months (Onboarding)"
+     else if [Tenure_Months] <= 12 then "7–12 months (Established)"
+     else if [Tenure_Months] <= 24 then "13–24 months (Mature)"
+     else "25+ months (Loyal)"
+
+  4. Click OK
+
+M CODE (Alternative):
+  #"Added Tenure Bucket" = Table.AddColumn(
+    #"Previous", "Tenure_Bucket",
+    each if [Tenure_Months] = null then "Unknown"
+         else if [Tenure_Months] <= 3 then "0–3 months (New)"
+         else if [Tenure_Months] <= 6 then "4–6 months (Onboarding)"
+         else if [Tenure_Months] <= 12 then "7–12 months (Established)"
+         else if [Tenure_Months] <= 24 then "13–24 months (Mature)"
+         else "25+ months (Loyal)"
+    , type text)
+
+STEP 2: CREATE USAGE CATEGORIES (if not present)
+
+  1. Add Column > Conditional Column
+  2. Name: "Usage_Category"
+  3. Formula:
+     
+     if [Monthly_Usage] is null then "Not Available"
+     else if [Monthly_Usage] = 0 then "Zero (Inactive)"
+     else if [Monthly_Usage] < (Column Average of Monthly_Usage / 2) then "Low"
+     else if [Monthly_Usage] < (Column Average of Monthly_Usage * 1.5) then "Medium"
+     else "High"
+
+  4. Click OK (or calculate average first for precision)
+
+M CODE:
+  #"Added Usage Category" = Table.AddColumn(
+    #"Previous", "Usage_Category",
+    each if [Monthly_Usage] = null then "Not Available"
+         else if [Monthly_Usage] = 0 then "Zero (Inactive)"
+         else if [Monthly_Usage] < 20 then "Low"
+         else if [Monthly_Usage] < 50 then "Medium"
+         else "High"
+    , type text)
+
+  // Note: Replace 20, 50 with your column's actual thresholds
+
+STEP 3: DERIVE USAGE_CHANGE (Month-over-Month)
+
+If Usage_Change not already in source, calculate it:
+
+  1. Sort by: Customer_ID (ascending), then Report_Month (ascending)
+  2. Add Column > Custom Column
+  3. Name: "Prior_Month_Usage"
+  4. Formula: 
+     
+     try Number.FromText([Monthly_Usage]) otherwise null
+     // (Can reference prior row if using Advanced mode, but simpler approach is
+       to merge with self on Customer_ID and Report_Month-1)
+
+  For M (more complex but accurate):
+  
+  #"Sorted" = Table.Sort(Source, {{"Customer_ID", Order.Ascending}, {"Report_Month", Order.Ascending}}),
+  #"Added Prior Month Usage" = Table.AddColumn(#"Sorted", "Prior_Month_Usage",
+    each 
+      let
+        CurrentCustomer = [Customer_ID],
+        CurrentMonth = [Report_Month],
+        PriorMonth = Date.AddMonths(CurrentMonth, -1),
+        LookupUsage = Table.SelectRows(#"Sorted", each [Customer_ID] = CurrentCustomer and [Report_Month] = PriorMonth),
+        UsageValue = if Table.RowCount(LookupUsage) > 0 then LookupUsage[Monthly_Usage]{0} else null
+      in
+        UsageValue
+  , type number),
+  #"Added Usage Change %" = Table.AddColumn(#"Added Prior Month Usage", "Usage_Change_Pct",
+    each if [Prior_Month_Usage] = null or [Prior_Month_Usage] = 0 then null
+         else ([Monthly_Usage] - [Prior_Month_Usage]) / [Prior_Month_Usage] * 100
+  , type number)
+
+  // Note: This M code is complex; simpler approach: Create Pivot in Power BI DAX instead
+
+STEP 4: STANDARDIZE SATISFACTION_SCORE
+
+  - Replace blanks with median (e.g., 3)
+    Replace Values: Find blank → Replace: 3
+  - Ensure type is Decimal Number
+  - Range check: 1 ≤ Satisfaction_Score ≤ 5
+
+STEP 5: CLEAN SUPPORT_TICKETS COLUMN
+
+  - Ensure type is Whole Number
+  - Replace errors with 0 (no ticket = no error)
+  - Replace blanks with 0
+
+================================================================================
+SECTION 2: DAX MEASURES FOR QUESTIONS 7–9
+================================================================================
+
+2.1 TENURE-BASED MEASURES (Q7)
+
+MEASURE 1: Average Tenure by Churn Status
+Purpose: Compare average tenure of churned vs. active customers
+Audience: Product, Customer Success (identify when churn typically happens)
+
+DAX CODE:
+  Avg Tenure Months (All) = AVERAGE('fact_customer_churn'[Tenure_Months])
+  
+  Avg Tenure Churned = CALCULATE(
+    AVERAGE('fact_customer_churn'[Tenure_Months]),
+    'fact_customer_churn'[Churn_Flag] = TRUE()
+  )
+  
+  Avg Tenure Active = CALCULATE(
+    AVERAGE('fact_customer_churn'[Tenure_Months]),
+    'fact_customer_churn'[Churn_Flag] = FALSE()
+  )
+
+Comment: These measures reveal if churn is "early-stage" (low avg tenure) or evenly distributed.
+Example: If Avg Tenure (Churned) = 4 months, churn is early-stage (focus onboarding).
+
+MEASURE 2: Churn Rate by Tenure Bucket
+Purpose: Churn % within each lifecycle stage
+Audience: Product, CS Leadership (lifecycle-specific strategies)
+
+DAX CODE:
+  Churn Rate % (by Tenure) = [Churn Rate %]
+  
+  // Comment: [Churn Rate %] measure from Chunk 2 auto-filters by Tenure_Bucket
+  // when Tenure_Bucket is in visual context.
+
+For explicit measure (if preferred):
+
+  Churn by Tenure = 
+    VAR TenureTotal = DISTINCTCOUNT('fact_customer_churn'[Customer_ID])
+    VAR TenureChurned = CALCULATE(
+      DISTINCTCOUNT('fact_customer_churn'[Customer_ID]),
+      'fact_customer_churn'[Churn_Flag] = TRUE()
+    )
+    RETURN
+      IF(TenureTotal = 0, BLANK(), DIVIDE(TenureChurned, TenureTotal) * 100)
+
+MEASURE 3: Early-Stage Customer Health Score (Derived)
+Purpose: Identify risk profile for new customers (0-6 months)
+Audience: Onboarding Team (track cohort health)
+
+DAX CODE:
+  New Customer Health = 
+    VAR NewCustomers = CALCULATE(
+      DISTINCTCOUNT('fact_customer_churn'[Customer_ID]),
+      'fact_customer_churn'[Tenure_Months] <= 6
+    )
+    VAR NewCustomersChurned = CALCULATE(
+      DISTINCTCOUNT('fact_customer_churn'[Customer_ID]),
+      'fact_customer_churn'[Tenure_Months] <= 6,
+      'fact_customer_churn'[Churn_Flag] = TRUE()
+    )
+    VAR EarlyChurnRate = DIVIDE(NewCustomersChurned, NewCustomers)
+    RETURN
+      IF(EarlyChurnRate > 0.25, "Red", IF(EarlyChurnRate > 0.15, "Yellow", "Green"))
+
+Comment: Categorizes early-stage health (red = >25% churn, yellow = 15–25%, green = <15%)
+Use Case: Alerts (red = escalate to VP CS)
+
+2.2 USAGE-BASED MEASURES (Q8)
+
+MEASURE 4: Average Usage (by Churn Status)
+Purpose: Compare engagement levels between churned and active customers
+Audience: Product, Customer Success (usage disconnect from churn)
+
+DAX CODE:
+  Avg Usage (All Customers) = AVERAGE('fact_customer_churn'[Monthly_Usage])
+  
+  Avg Usage Churned = CALCULATE(
+    AVERAGE('fact_customer_churn'[Monthly_Usage]),
+    'fact_customer_churn'[Churn_Flag] = TRUE()
+  )
+  
+  Avg Usage Active = CALCULATE(
+    AVERAGE('fact_customer_churn'[Monthly_Usage]),
+    'fact_customer_churn'[Churn_Flag] = FALSE()
+  )
+
+Comment: If Avg Usage (Churned) << Avg Usage (Active), usage is strong churn predictor.
+Example: Churned avg 5 units, Active avg 45 units → usage drop signals churn.
+
+MEASURE 5: Usage Decline Alert (Derived)
+Purpose: Identify customers with significant usage drop (early warning)
+Audience: Customer Success (trigger intervention)
+
+DAX CODE:
+  Usage Declining = 
+    VAR AverageUsage = [Avg Usage (All Customers)]
+    VAR CurrentUsage = AVERAGE('fact_customer_churn'[Avg_Usage_Last_3_Months])
+    VAR DeclineThreshold = AverageUsage * 0.5 // More than 50% below average
+    RETURN
+      IF(ISBLANK(CurrentUsage), "No Data",
+        IF(CurrentUsage < DeclineThreshold AND [Churn_Flag] = FALSE(), "Alert", "Normal"))
+
+Comment: Flags customers with usage <50% of baseline (high churn risk, still active)
+Use Case: Trigger CS outreach: "Your usage is declining—how can we help?"
+
+MEASURE 6: Inactive Customer Count
+Purpose: Count customers with zero usage in period
+Audience: Onboarding, CS (high-risk segment)
+
+DAX CODE:
+  Inactive Customers = CALCULATE(
+    DISTINCTCOUNT('fact_customer_churn'[Customer_ID]),
+    'fact_customer_churn'[Monthly_Usage] = 0
+  )
+
+Comment: Inactive customers (usage = 0) have 3–5x higher churn probability.
+Use Case: Reactivation campaign target list.
+
+2.3 SUPPORT-QUALITY MEASURES (Q9)
+
+MEASURE 7: Average Support Tickets (by Churn Status)
+Purpose: Determine if support ticket volume is churn driver (frustration) or indicator
+Audience: Support Leadership, CS (support quality link to churn)
+
+DAX CODE:
+  Avg Support Tickets (All) = AVERAGE('fact_customer_churn'[Support_Tickets])
+  
+  Avg Support Tickets Churned = CALCULATE(
+    AVERAGE('fact_customer_churn'[Support_Tickets]),
+    'fact_customer_churn'[Churn_Flag] = TRUE()
+  )
+  
+  Avg Support Tickets Active = CALCULATE(
+    AVERAGE('fact_customer_churn'[Support_Tickets]),
+    'fact_customer_churn'[Churn_Flag] = FALSE()
+  )
+
+Comment: Interpretation depends on pattern:
+  - If Churned avg >> Active avg: High tickets = churn driver (support failure)
+  - If Churned avg = Active avg: Tickets not driver (unrelated to churn)
+
+MEASURE 8: Support Satisfaction Link
+Purpose: Measure correlation between support tickets and satisfaction
+Audience: Support Leadership (improvement targeting)
+
+DAX CODE:
+  Avg Satisfaction Score (All) = AVERAGE('fact_customer_churn'[Satisfaction_Score])
+  
+  Avg Satisfaction Churned = CALCULATE(
+    AVERAGE('fact_customer_churn'[Satisfaction_Score]),
+    'fact_customer_churn'[Churn_Flag] = TRUE()
+  )
+  
+  Avg Satisfaction Active = CALCULATE(
+    AVERAGE('fact_customer_churn'[Satisfaction_Score]),
+    'fact_customer_churn'[Churn_Flag] = FALSE()
+  )
+
+Comment: If Satisfaction (Churned) = 2.1 / 5 vs. Active = 4.0 / 5 → satisfaction is strong churn driver.
+
+MEASURE 9: High-Risk Support Customers
+Purpose: Identify customers with high ticket volume AND low satisfaction (at-risk)
+Audience: Support, CS (urgent intervention candidates)
+
+DAX CODE:
+  High Risk Support Customers = CALCULATE(
+    DISTINCTCOUNT('fact_customer_churn'[Customer_ID]),
+    'fact_customer_churn'[Support_Tickets] >= 3, // 3+ tickets
+    'fact_customer_churn'[Satisfaction_Score] <= 2, // Low satisfaction (1–2 / 5)
+    'fact_customer_churn'[Churn_Flag] = FALSE() // Still active (not yet churned)
+  )
+
+Comment: These are "at-risk" customers (60%+ churn risk within 30 days).
+Use Case: Daily monitoring; trigger personal outreach from VP/Account Manager.
+
+================================================================================
+SECTION 3: CALCULATED COLUMNS FOR Q7–Q9
+================================================================================
+
+3.1 CALCULATED COLUMNS IN DAX
+
+Column 1: Tenure_Years (if Tenure_Months exists)
+Purpose: Human-readable tenure (years instead of months)
+Location: Model > Add Column to fact_customer_churn
+
+DAX CODE:
+  Tenure_Years = DIVIDE('fact_customer_churn'[Tenure_Months], 12, 0)
+
+Use: Visual display (e.g., "2.5 years" is more intuitive than "30 months")
+
+Column 2: Lifecycle_Stage (explicit version if Power Query bucket insufficient)
+Purpose: Business-friendly lifecycle label
+Location: Model > Add Column to fact_customer_churn
+
+DAX CODE:
+  Lifecycle_Stage = 
+    IF('fact_customer_churn'[Tenure_Months] <= 3, "New Customer",
+    IF('fact_customer_churn'[Tenure_Months] <= 6, "Onboarding",
+    IF('fact_customer_churn'[Tenure_Months] <= 12, "Established",
+    IF('fact_customer_churn'[Tenure_Months] <= 24, "Mature",
+    IF('fact_customer_churn'[Tenure_Months] > 24, "Loyal", "Unknown")))))
+
+Use: Reports, filters, drill-down tables
+
+Column 3: Usage_Status (derived from usage level)
+Purpose: Categorize engagement level
+Location: Model > Add Column
+
+DAX CODE:
+  Usage_Status = 
+    IF('fact_customer_churn'[Monthly_Usage] = 0, "Inactive",
+    IF('fact_customer_churn'[Monthly_Usage] < 20, "Below Average",
+    IF('fact_customer_churn'[Monthly_Usage] < 50, "Average",
+    IF('fact_customer_churn'[Monthly_Usage] <= 100, "Above Average", "Power User"))))
+
+Use: Engagement dashboard, targeted playbooks
+
+Column 4: Churn_Risk_Profile (composite; uses multiple columns)
+Purpose: Multi-factor risk scoring (no ML; rule-based)
+Location: Model > Add Column
+
+DAX CODE:
+  Churn_Risk_Profile = 
+    VAR RiskScore = 
+      (IF('fact_customer_churn'[Tenure_Months] < 6, 1, 0) +  // New = +1 risk
+       IF('fact_customer_churn'[Monthly_Usage] < 20, 1, 0) +  // Low usage = +1 risk
+       IF('fact_customer_churn'[Support_Tickets] >= 3, 1, 0) + // High tickets = +1 risk
+       IF('fact_customer_churn'[Satisfaction_Score] <= 2, 1, 0)) // Low satisfaction = +1 risk
+    RETURN
+      IF(RiskScore >= 3, "Critical",
+      IF(RiskScore = 2, "High",
+      IF(RiskScore = 1, "Medium", "Low")))
+
+Comment: Scores 0–4 points based on risk factors; maps to risk tier (Critical–Low)
+Use: Alert system, intervention prioritization, dashboard highlighting
+
+================================================================================
+SECTION 4: VISUALS FOR QUESTIONS 7–9
+================================================================================
+
+4.1 VISUAL 1: AREA CHART FOR TENURE LIFECYCLE (Q7)
+
+PURPOSE: Show churn rate curve across customer lifetime (bathtub shape expected)
+
+Visual Type: Area Chart (line with filled area below)
+
+FIELD CONFIGURATION:
+  - X-AXIS: Tenure_Bucket (in order: 0–3, 4–6, 7–12, 13–24, 25+)
+    OR: Tenure_Months (continuous; Power BI auto-buckets)
+  
+  - Y-AXIS (VALUES): [Churn Rate %]
+  
+  - LEGEND: NONE (single line)
+
+FORMATTING:
+
+  Title:
+    - "Churn Rate Across Customer Lifetime"
+    - Font: 14pt, Bold
+
+  Axis Titles:
+    - X: "Customer Tenure"
+    - Y: "Churn Rate (%)"
+    - Show: ON
+
+  X-Axis:
+    - If using Tenure_Bucket: Custom sort order (0–3, 4–6, etc.)
+    - If using Tenure_Months: Continuous scale (months 0–60+)
+
+  Line & Area:
+    - Line Color: #4472C4 (blue)
+    - Line Width: 3pt
+    - Area Fill Color: #4472C4, Transparency 50%
+    - Markers: Circle, medium size
+
+  Data Labels:
+    - Show: ON (on line)
+    - Values: Churn Rate %
+    - Position: Top of line
+    - Font Size: 10pt
+
+  Y-Axis:
+    - Min: 0%, Max: Auto (or 40% if capping)
+    - Gridlines: ON
+
+ANALYTICS (Trend/Reference):
+  - Add Reference Line at Y = 15% (benchmark churn)
+    Color: #FFC000 (yellow), Dashed
+    Label: "Industry Benchmark"
+    (Adjust benchmark to your industry standard)
+
+EXPECTED DISPLAY (Bathtub Curve):
+  ```
+  Churn Rate Across Customer Lifetime
+  40% ┤ ╱‾‾╲
+      │╱    ╲
+  25% ┤      ╲___
+      │          ╲___
+  10% ┤              ‾‾‾‾╲
+      │                    ╲
+   0% ┴─────────────────────────
+      0–3  4–6  7–12  13–24  25+
+      (months)
+  ```
+  
+  Interpretation:
+  - High early churn (0–3 months: ~35–40%): Inadequate onboarding
+  - Sharp drop (4–6: ~15–20%): Natural stabilization
+  - Stable middle (7–24: ~10–15%): Established customers, steady
+  - Low late (25+: ~5–10%): Loyal base, high LTV
+
+POSITIONING ON REPORT PAGE:
+  - Top-left corner of new "Behavioral & Engagement" page
+  - Occupy 3 columns × 2 rows (~800px × 400px)
+
+INTERPRETATION GUIDE:
+  If bathtub curve visible: Early-stage churn (onboarding issue) confirmed.
+  Action: Invest in onboarding improvements (training, support, check-ins).
+  
+  If flat curve (e.g., 18% across all tenures): Churn is not tenure-driven;
+  investigate other factors (Q8, Q9, Q4–Q6).
+
+4.2 VISUAL 2: SCATTER PLOT FOR USAGE VS. CHURN (Q8)
+
+PURPOSE: Visualize relationship between usage and churn; identify at-risk (low usage, active) customers
+
+Visual Type: Scatter Chart (XY scatter)
+
+FIELD CONFIGURATION:
+  - X-AXIS: [Monthly_Usage] (engagement level)
+  - Y-AXIS: [Satisfaction_Score] or [Support_Tickets] (quality indicator)
+  - DETAILS (Tooltip): [Customer_ID], [Tenure_Months], [Churn_Flag]
+  - COLOR: [Churn_Flag] (Churned = Red, Active = Green)
+  - SIZE: [Monthly_Charges] (optional; larger bubble = higher-value customer)
+
+FORMATTING:
+
+  Title:
+    - "Engagement vs. Churn Status"
+    - Font: 14pt, Bold
+
+  Axis Titles:
+    - X: "Monthly Usage"
+    - Y: "Satisfaction Score" or "Support Tickets"
+    - Show: ON
+
+  Data Points (Bubbles):
+    - Churned Customers: Red (#FF0000)
+    - Active Customers: Green (#92D050)
+    - Size: Uses Monthly_Charges (larger = higher value)
+    - Transparency: 60% (see overlapping bubbles)
+
+  X-Axis Scale:
+    - Min: 0, Max: 95th percentile of usage (avoid stretching for outliers)
+    - Gridlines: ON
+
+  Y-Axis Scale (if using Satisfaction):
+    - Min: 0, Max: 5 (satisfaction 1–5 scale)
+    - Gridlines: ON
+  
+  Y-Axis Scale (if using Support Tickets):
+    - Min: 0, Max: 20 (typical)
+    - Gridlines: ON
+
+  Legend:
+    - Show: ON
+    - Position: Right
+    - Items: "Churned" (red), "Active" (green)
+
+EXPECTED DISPLAY:
+  ```
+  Engagement vs. Churn Status
+  5 ┤ ∘∘∘∘∘∘∘∘∘∘ (green = active, satisfied, high usage)
+    │
+  3 ┤     ∘●●●●●  (●red●●●●● = churned, low engagement)
+    │
+  1 ┤  ●●●●●●●●   (red right-side = churned, low usage)
+    │
+    ┴─────────────────
+      0    25  50  75
+      Monthly Usage
+  
+  Legend: ∘ Active | ● Churned
+  ```
+
+INTERPRETATION:
+  - Left side (low usage): Red bubbles = at-risk, already churned
+  - Left-Green: At-risk BEFORE churn (proactive target)
+  - Right side (high usage): Green bubbles = active, engaged
+  - Pattern: Clear cluster of red low-usage = usage is strong churn signal
+
+POSITIONING ON REPORT PAGE:
+  - Top-right, next to area chart
+  - Occupy 3 columns × 2 rows (~800px × 400px)
+
+DRILL-THROUGH / INTERACTIVITY:
+  - Enable drill-through to "Customer Details" page (Q12)
+  - Clicking red bubble → shows details of churned customer, usage history
+  - Use case: "Why did this customer churn? Usage was zero for 2 months."
+
+4.3 VISUAL 3: BOX & WHISKER PLOT FOR SUPPORT QUALITY (Q9)
+
+PURPOSE: Show distribution of support metrics; identify support quality issues correlating w/ churn
+
+Visual Type: Box Plot (or Combo chart if Box not available)
+
+FIELD CONFIGURATION (IF BOX PLOT AVAILABLE):
+  - CATEGORY: [Churn_Flag] (Churned / Active)
+  - VALUES: [Support_Tickets] (number of tickets)
+
+FORMATTING:
+
+  Title:
+    - "Support Ticket Distribution by Churn Status"
+    - Font: 14pt, Bold
+
+  Axis Titles:
+    - X: "Customer Status"
+    - Y: "Support Tickets (count)"
+    - Show: ON
+
+  Box Plot Elements:
+    - Median line: Dark blue (#1F4E78)
+    - Box (IQR): Light blue (#4472C4), Transparency 70%
+    - Whiskers: Lines extending to min/max (gray)
+    - Outliers: Shown as points (red if extreme)
+
+  X-Axis:
+    - Categories: "Churned" (left), "Active" (right)
+
+  Y-Axis:
+    - Min: 0, Max: 20 (or 99th percentile)
+    - Gridlines: ON
+
+EXPECTED DISPLAY:
+  ```
+  Support Ticket Distribution by Churn Status
+  20┤  ●  (outlier)
+    │  │
+  10┤  ├───┐
+    │  │ █ │  (active median = 1 ticket)
+   5┤  ├───┤
+    │  │   │
+    │  │   │
+   0┴──┴───┴───
+
+     Churned  Active
+
+  Boxes: Churned has higher median (~3) vs. Active (~1)
+  This shows: Churned customers tend to open more support tickets
+  Interpretation: Could be (A) precursor to churn or (B) sign of poor support
+  ```
+
+INTERPRETATION:
+  - If Churned median >> Active median: High support = churn precursor
+    Action: Improve support quality (faster resolution) and CS follow-up
+  - If similar medians: Support volume not driver; investigate other factors
+  - Outliers (extreme support tickets): Flag for manual review
+
+POSITIONING ON REPORT PAGE:
+  - Middle-left, below area chart
+  - Occupy 2 columns × 2 rows (~600px × 350px)
+
+ALTERNATIVE (IF BOX PLOT NOT AVAILABLE):
+  Use Clustered Column Chart:
+    - X-axis: Churn_Flag (Churned / Active)
+    - Y-axis: [Avg Support Tickets Churned] and [Avg Support Tickets Active]
+    - Two bars side-by-side for comparison
+
+4.4 VISUAL 4: AT-RISK CUSTOMER SUMMARY TABLE
+
+PURPOSE: Detailed list of at-risk customers (high risk but not yet churned)
+Audience: Customer Success Team (intervention target list)
+
+Visual Type: Table (sortable, filterable)
+
+FIELD CONFIGURATION:
+
+  ROWS:
+    - Customer_ID
+    - Lifecycle_Stage
+    - Tenure_Months
+    - Monthly_Usage
+    - Support_Tickets
+    - Satisfaction_Score
+    - Churn_Risk_Profile (rule-based score from Section 3.1)
+
+  FILTERING (built-in):
+    - Only show: Churn_Flag = FALSE (active customers only)
+    - AND: Churn_Risk_Profile = "Critical" or "High"
+
+  SORT:
+    - Primary: Churn_Risk_Profile (Critical first)
+    - Secondary: Tenure_Months (newest first; earliest cohort)
+
+FORMATTING:
+
+  Header Row:
+    - Background: #2E75B6 (blue)
+    - Text: White, Bold, 11pt
+    - Borders: 2pt bottom
+
+  Data Rows:
+    - Alternating white / #F5F5F5 (light gray)
+    - Row Height: 25px (compact)
+    - Font: 10pt, Black
+
+  Column Formatting:
+    - Customer_ID: Text, monospace (code)
+    - Lifecycle_Stage: Text, centered
+    - Tenure_Months: Whole number
+    - Monthly_Usage: Whole number
+    - Support_Tickets: Whole number
+    - Satisfaction_Score: Decimal, 1 place (e.g., 2.5/5)
+    - Churn_Risk_Profile: Text, colored background:
+      "Critical" → Red background (#FF0000)
+      "High" → Orange background (#FFC000)
+      "Medium" → Yellow background (#FFFF00)
+
+  Conditional Formatting (Optional):
+    - Monthly_Usage column: Green (>50) / Yellow (20–50) / Red (<20)
+    - Satisfaction_Score: Green (4–5) / Yellow (2–3) / Red (1)
+
+EXPECTED TABLE OUTPUT:
+  ```
+  Customer_ID | Stage      | Tenure | Usage | Tickets | Satisfaction | Risk
+  ─────────────────────────────────────────────────────────────────────────
+  CUST_0234   | New        | 2 mo   | 0     | 2       | 2.0/5         | 🔴Critical
+  CUST_1982   | Onboarding | 5 mo   | 8     | 4       | 1.5/5         | 🔴Critical
+  CUST_5401   | Established| 8 mo   | 12    | 3       | 2.5/5         | 🟠High
+  CUST_2938   | Mature     | 18 mo  | 5     | 2       | 3.0/5         | 🟠High
+  ...
+  [continues, filterable/sortable]
+  ```
+
+POSITIONING ON REPORT PAGE:
+  - Bottom half of page, full width
+  - Occupy 6 columns × scrollable rows
+
+ROW CONTEXT (Interactivity):
+  - Clicking row → Drill through to "Customer Details" page showing full history
+  - Right-click → Copy Customer_ID for external outreach list
+
+EXPECTED USAGE:
+  - Daily report generated for CS leadership
+  - High/Critical customers = assigned to Account Manager for outreach
+  - Example outreach: "Hi [Name], noticed your usage has been low. How can I help?"
+
+================================================================================
+SECTION 5: REPORT PAGE DESIGN - BEHAVIORAL & ENGAGEMENT DASHBOARD
+================================================================================
+
+5.1 PAGE NAME & PURPOSE
+
+Page Name: "Behavioral & At-Risk"
+Alternative: "Engagement & Lifecycle", "Behavioral Drivers"
+Purpose: Identify behavioral patterns and at-risk customers for proactive intervention
+Intended Audience: Customer Success Leadership, Onboarding Team, Support Team
+
+5.2 PAGE LAYOUT DIAGRAM
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│ PAGE TITLE: "Behavioral & Engagement Drivers - At-Risk Customer View" │
+│ Subtitle: "Identify usage, support, and tenure patterns predicting churn"
+└────────────────────────────────────────────────────────────────────────┘
+
+FILTER ROW (Top):
+┌────────────────────────────────────────────────────────────────────────┐
+│ [Report_Month ▼] [Lifecycle_Stage ▼] [Risk_Profile ▼] [Reset ◄]      │
+└────────────────────────────────────────────────────────────────────────┘
+
+KEY METRICS (Top Row):
+┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
+│ Critical Risk    │  │ Avg Usage        │  │ Avg Satisfaction │
+│ Customers: 127   │  │ (All): 38 units  │  │ (Churned): 2.3   │
+│ (+15 vs last mo) │  │ (Churned): 12    │  │ (Active): 3.8    │
+└──────────────────┘  └──────────────────┘  └──────────────────┘
+
+MAIN CHARTS (3-chart layout):
+┌──────────────────────────────────────────┐  ┌──────────────────┐
+│ AREA CHART: Churn Rate by Tenure (Q7)   │  │ BOX PLOT:        │
+│ Shows bathtub curve                      │  │ Support Quality  │
+│                                          │  │ by Churn Status  │
+│ [Area fills; peaks early tenure]         │  │                  │
+│                                          │  │ [Boxes show dist]│
+└──────────────────────────────────────────┘  └──────────────────┘
+
+┌────────────────────────────────────────────────────────────────────────┐
+│ SCATTER PLOT: Usage vs. Churn Status (Q8)                             │
+│ Color: Churned (red) vs. Active (green)                               │
+│ Size: Customer value (Monthly_Charges)                                │
+│ Interpretation: Low-left (red) = at-risk churned; low-left (green) = at-risk but active
+│ [Scatter shows concentration of red left-side]                         │
+└────────────────────────────────────────────────────────────────────────┘
+
+AT-RISK CUSTOMERS (Full-width table, scrollable):
+┌────────────────────────────────────────────────────────────────────────┐
+│ INTERVENTION TARGET LIST: Critical & High Risk Customers (Active)      │
+│ Customer | Stage | Tenure | Usage | Tickets | Satisfaction | Action   │
+│ CUST_... | ...                                                         │
+│ [rows filterable by stage/risk; sortable]                             │
+│ [Rows color-coded: Red (Critical), Orange (High)]                      │
+└────────────────────────────────────────────────────────────────────────┘
+
+FOOTER / INSIGHTS:
+┌────────────────────────────────────────────────────────────────────────┐
+│ KEY INSIGHT: [Dynamic text module]                                     │
+│ "127 customers at critical risk (2%+ monthly churn probability).       │
+│  Focus: New customers (0–3 mo) with zero usage or low satisfaction.    │
+│  Recommended Action: Assign to onboarding CS for immediate outreach."  │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+5.3 FILTERS & SLICERS
+
+Slicer 1: Report_Month
+  - Field: dim_Calendar[YearMonth_Text]
+  - Type: Dropdown
+  - Default: Current month
+  - Interaction: Filters all visuals and table
+
+Slicer 2: Lifecycle_Stage
+  - Field: Lifecycle_Stage (calculated column from Section 3.1)
+  - Type: Dropdown multi-select
+  - Default: All
+  - Values: New, Onboarding, Established, Mature, Loyal
+  - Interaction: Filters charts and table
+  - Use Case: "Show me only 0–3 month customers at risk"
+
+Slicer 3: Churn_Risk_Profile
+  - Field: Churn_Risk_Profile (calculated column from Section 3.1)
+  - Type: Dropdown multi-select
+  - Default: Unchecked; user selects "Critical" to see urgent cases
+  - Values: Critical, High, Medium, Low
+  - Interaction: Filters summary table (not charts, to avoid over-filtering)
+
+5.4 PAGE FORMATTING & COLOR
+
+Background:
+  - Color: White or #FAFAFA
+  - Transparency: 0%
+
+Title:
+  - Font: Segoe UI, 16pt, Bold, #1F4E78
+  - Background: #D9E1F2 (light blue), full-width
+  - Padding: 15px top/bottom
+
+Key Metrics Cards:
+  - Background: White, border 1pt gray
+  - Title: 11pt, bold, dark blue
+  - Value: 18pt, bold, color-coded (red for critical count)
+  - Shadow: Light gray, 2–3pt
+
+Color Standards:
+  - Tenure (Area): Blue (#4472C4)
+  - Churn (Scatter): Red (#FF0000), Green (#92D050)
+  - Support (Box): Blue (#4472C4)
+  - Risk Level: Critical = Red, High = Orange, Medium = Yellow, Low = Green
+  - Satisfaction: 1–2 = Red, 2–3 = Yellow, 4–5 = Green
+
+================================================================================
+SECTION 6: TESTING & VALIDATION (Q7–Q9)
+================================================================================
+
+6.1 DATA VALIDATION CHECKLIST
+
+☐ Tenure_Months: values 0–60+, no nulls, matches Join_Date to Report_Month
+  Verify: Data view > Column Profile > Tenure_Months shows min/max/avg
+
+☐ Monthly_Usage: values 0–10,000+ (realistic), no negatives
+  Verify: Column Profile > No red flags
+
+☐ Support_Tickets: whole numbers, 0–20 typical, no negatives
+  Verify: Column Profile > Distinct values ≤ 100
+
+☐ Satisfaction_Score: 1–5 only, no blanks (filled if was missing)
+  Verify: Column Profile > Min=1, Max=5, no nulls
+
+☐ Calculated columns (Tenure_Bucket, Usage_Category, Churn_Risk_Profile):
+  All populated, no blanks, expected values present
+  Verify: Data view > Scroll through sample rows
+
+6.2 MEASURE VALIDATION (Spot-Check Calculations)
+
+Test [Avg Tenure Churned]:
+  1. Create pivot in Excel: Customer_ID, Churn_Flag, Tenure_Months
+  2. Filter: Churn_Flag = 1 (only churned)
+  3. Calculate: AVERAGE(Tenure_Months)
+  4. Compare to Power BI card showing [Avg Tenure Churned]
+  
+  EXPECTED: Excel ≈ PBI (±0.5 months acceptable)
+
+Test [Avg Usage Churned] and [Avg Usage Active]:
+  1. Pivot: Churn_Flag, Monthly_Usage (avg)
+  2. Calculate for both true and false
+  3. Compare to measures
+  
+  EXPECTED: Churned <<< Active (usage gap confirms churn-engagement link)
+
+Test [High Risk Support Customers]:
+  1. Count rows: Support_Tickets >= 3 AND Satisfaction_Score <= 2 AND Churn_Flag = 0
+  2. Verify against [High Risk Support Customers] measure
+  
+  EXPECTED: Count matches within ±0 (exact match, no rounding)
+
+6.3 VISUAL VALIDATION CHECKLIST
+
+☐ AREA CHART (Tenure)
+  ☐ Shows bathtub curve (high left, dips middle, low right)
+  ☐ X-axis order correct (0–3, 4–6, 7–12, 13–24, 25+)
+  ☐ Y-axis 0% to max churn %
+  ☐ Area filled below line
+  ☐ Data labels readable on each point
+  ☐ Filters update curve: Changing Report_Month re-draws chart
+
+☐ SCATTER PLOT (Usage)
+  ☐ X-axis: Usage 0–max range
+  ☐ Y-axis: Satisfaction 1–5 or Tickets 0–max
+  ☐ Red bubbles (churned): Concentrated low-left (low usage, low satisfaction)
+  ☐ Green bubbles (active): Spread across, many on right (high usage)
+  ☐ Bubble size proportional to Monthly_Charges
+  ☐ Hover tooltip shows Customer_ID, Tenure, etc.
+
+☐ BOX PLOT (Support Quality)
+  ☐ Two boxes: "Churned" (left), "Active" (right)
+  ☐ Churned box median higher than Active (more tickets)
+  ☐ Whiskers extend to min/max
+  ☐ Outliers shown as red dots above
+  ☐ Y-axis 0 to max tickets
+
+☐ AT-RISK CUSTOMER TABLE
+  ☐ Rows: Only Critical + High risk customers, Churn_Flag = FALSE
+  ☐ Sorted: Critical first, then high; within each, newest tenure first
+  ☐ Columns formatted correctly (numbers, percentages, decimals)
+  ☐ Row colors: Red (critical), Orange (high)
+  ☐ Horizontally scrollable if many columns
+  ☐ Rows clickable: Drill-through on click
+
+6.4 INTERACTION TESTING
+
+Test 1: Lifecycle Filter
+  Step: Set Lifecycle_Stage slicer to "New Customer" (0–3 months)
+  Expected:
+    - Area chart shows only "0–3 months" bar (or filters data to that tenure)
+    - Scatter plot shows only new customers (left side)
+    - Table shows only new customers
+    - Churn rate for new := ~30%+ (early high churn)
+  Pass/Fail: ___
+
+Test 2: Risk Profile Filter
+  Step: Set Churn_Risk_Profile to "Critical" only
+  Expected:
+    - Table shows only critical customers (red)
+    - All other visuals still show full data (filters not cascaded to charts;
+      only to table, to avoid over-filtering)
+  Pass/Fail: ___
+
+Test 3: Month Change
+  Step: Set Report_Month to different month (e.g., 3 months prior)
+  Expected:
+    - All visuals update
+    - Key metrics change (different at-risk count, different avg usage)
+    - Area chart data refreshed (churn rates per tenure for that month)
+  Pass/Fail: ___
+
+6.5 ACCEPTANCE CRITERIA FOR Q7–Q9
+
+CRITERION 1: TENURE LIFECYCLE ANALYSIS (Q7)
+✓ Area chart shows clear bathtub curve (high early, low late)
+✓ Churn rate at 0–3 months ≥ 25% (high early churn evident)
+✓ Churn rate at 25+ months < 10% (mature stability evident)
+✓ Values match manual Excel pivot ±0.5%
+PASS WHEN: Bathtub curve visible and quantified; early-stage churn confirmed
+
+CRITERION 2: USAGE CORRELATION ANALYSIS (Q8)
+✓ Scatter plot shows red bubbles clustered low-left (churned = low usage)
+✓ Avg usage (churned) < Avg usage (active) by at least 50%
+✓ Usage threshold identified (e.g., <20 units = churn risk)
+✓ Green bubbles in low-usage area (at-risk but active) are targets for intervention
+PASS WHEN: Usage as churn predictor is visually clear and quantified
+
+CRITERION 3: SUPPORT QUALITY ANALYSIS (Q9)
+✓ Box plot or comparison shows support ticket distribution
+✓ If churned median > active median: Support quality is churn driver candidate
+✓ High vs. low satisfaction customers show clear churn difference
+✓ [High Risk Support Customers] count populated and accurate
+PASS WHEN: Support quality link to churn quantified; at-risk customers identified
+
+================================================================================
+SECTION 7: EXPECTED INSIGHTS & BUSINESS OUTCOMES (Q7–Q9)
+================================================================================
+
+7.1 QUESTION 7: TENURE LIFECYCLE BATHTUB CURVE
+
+Expected Insight:
+  - 0–3 months: 35–40% churn (highest risk window)
+  - 4–6 months: 15–20% churn (critical stabilization period)
+  - 7–12 months: 8–12% churn (established, stable)
+  - 13–24 months: 5–8% churn (mature, loyal emerging)
+  - 25+ months: 3–5% churn (loyal, long-term)
+
+Business Action:
+  1. Onboarding intervention (0–3 months):
+     - Dedicated onboarding CS resource (1:1 check-ins weekly)
+     - Product orientation: Feature walkthrough, key use cases
+     - Quick wins: Within 1st week, show value
+     - Check-in cadence: Day 1, Day 7, Day 30, Day 90
+
+  2. Stabilization (4–6 months):
+     - Reduce touch frequency (weekly → bi-weekly)
+     - Success metrics: Key adoption milestones (e.g., "invited 3 team members")
+     - Risk trigger: If usage declining, escalate back to weekly
+
+  3. Mature (7–24 months):
+     - Shift to value expansion (cross-sell, advanced features)
+     - QBR (quarterly business review) cadence
+     - Risk trigger: Low usage, no feature adoption, satisfaction drop
+
+  4. Renewal focus (24+ months):
+     - Renewal calls at 60 days prior to renewal date
+     - Document ROI achieved
+     - Upsell opportunities (increased seats, premium features)
+
+Expected Business Outcome:
+  - Reduce 0–3 month churn from 35% to 25% within 6 months (via better onboarding)
+  - Increase cohort-level LTV by 15–20% (mature customers worth more)
+  - Lower CAC payback period (if early churn drops, payback faster)
+
+7.2 QUESTION 8: USAGE AS EARLY WARNING SIGNAL
+
+Expected Insight:
+  - Churned customers: Avg usage 12 units/month
+  - Active customers: Avg usage 45 units/month
+  - Usage ratio = 0.27 (churned use only 27% of active baseline)
+  
+  USAGE THRESHOLD: <20 units/month = churn risk zone (2x base risk)
+  - Zero usage = 5x base churn risk (essentially at-risk regardless of other factors)
+  
+  LEADING INDICATOR: Usage decline >50% in 30 days = imminent churn (60–90% probability in next 30 days)
+
+Business Action:
+  1. Usage-based alerts:
+     - Automated dashboard: Flag customers with usage <20 or zero for 14+ days
+     - Alert: CS team receives daily/weekly list (via email or dashboard)
+     - SLA: CS contacts customer within 24 hours of flag
+
+  2. Reactivation playbook (for zero-usage customers):
+     - Sequence 1: Email "We noticed you haven't logged in—here's a quick start guide"
+     - Sequence 2 (3 days later): "Here's a customer story from similar business—1-min read"
+     - Sequence 3 (7 days later): CS phone call "Let's find time for 15-min training"
+     - Sequence 4 (14 days later): Manager offer "If we can sort this, ready to help?"
+
+  3. Usage norm by segment:
+     - Different products have different baselines
+     - Set usage thresholds by: Product type, Industry, Customer segment
+     - Example: SaaS CRM baseline 30 units/mo; if <15, flag
+
+  4. Measure reactivation success:
+     - Of customers with zero usage flagged, % who reach 20+ units within 30 days = success metric
+     - Track: Reactivation rate, time-to-reactivation, LTV impact
+
+Expected Business Outcome:
+  - Recover 20–30% of at-risk (low-usage) customers via proactive outreach
+  - Reduce overall churn by 2–3 percentage points (if 15–20% of at-risk base recoverable)
+  - Revenue retention: Each recovered customer = X months of retained MRR
+
+7.3 QUESTION 9: SUPPORT QUALITY & CHURN LINKAGE
+
+Expected Insight:
+  - Churned customers: Avg 3.2 support tickets, Avg satisfaction 2.1 / 5
+  - Active customers: Avg 1.0 support tickets, Avg satisfaction 3.8 / 5
+  
+  INTERPRETATION: High support tickets + low satisfaction = churn signal (or cause)
+  - Could be causation: Poor support → frustration → churn
+  - Could be proxy: Customers with issues → contact support → churn if unresolved
+  
+  SATISFACTION CLIFF: Satisfaction <3 = 3x churn risk vs. satisfaction 4–5
+  Critical threshold: If avg satisfaction drops below 3.0 for cohort, escalate
+
+Business Action:
+  1. Support quality improvements:
+     - Resolution time: Track SLA (e.g., <48 hrs first response, <7 days resolution)
+     - Satisfaction feedback: Post-ticket survey (NPS or CSAT question)
+     - Root cause: Analyze churned customer tickets—what issues unresolved?
+     - Example finding: "20% of churned customers had unresolved billing issues"
+     - Answer: Assign billing specialist to support team, cross-train
+
+  2. Escalation triggers:
+     - Customer opens 3+ tickets without satisfaction survey response: Escalate to manager
+     - Customer satisfaction drops from 4 to <2 in 30 days: Trigger outreach
+     - Customer has 3+ tickets AND satisfaction <2: High-risk tag → daily monitoring
+
+  3. Support playbook by risk tier:
+     - High-Risk (3+ tickets, sat <2): Manager phone call + action plan
+     - Medium-Risk (2 tickets, sat = 3): Dedicated CS touch + resource commitment
+     - Low-Risk (1 ticket, sat >3): Standard support + proactive offers
+
+Expected Business Outcome:
+  - Reduce avg support tickets for at-risk cohort from 3.2 to 2.0 (faster resolution)
+  - Increase satisfaction score for at-risk from 2.1 to 3.0+ (acceptable level)
+  - Churn reduction: 1-point satisfaction increase = ~5–10% churn reduction (typical impact)
+
+7.4 COMBINED INSIGHTS (Q7–Q9)
+
+META-PATTERN:
+  New customers (0–3 mo) + Zero usage + 2+ support tickets + Satisfaction <2 = CRITICAL RISK
+  
+  TYPICAL STORY:
+  1. Customer signs up (day 0)
+  2. Doesn't use product in first week (adoption gap)
+  3. Opens support ticket (confused) on day 7
+  4. Gets generic response (not helpful)
+  5. Opens 2nd ticket day 14 (frustrated)
+  6. No satisfactory resolution (still confused)
+  7. Satisfaction drops to 1–2 / 5
+  8. Churns day 45 (end of free trial or month 1)
+  
+  ROOT CAUSE: Onboarding failure + support inadequacy
+
+IMMEDIATE ACTION:
+  1. Segment: Identify new customers (0–3 mo) with zero usage (0–7 days)
+  2. Rank: Sort by highest support ticket count (3+ = urgent)
+  3. Intervene: Daily manager outreach, offer training, reset satisfaction
+  4. Measure: Track reactivation rate; target 25–30% recovery
+
+EXPECTED OUTCOME:
+  Reduce 0–3 month churn from 35% to 20% within 90 days (via coordinated
+  onboarding + support + usage monitoring intervention).
+
+================================================================================
+SECTION 8: TRANSITION TO CHUNK 5
+================================================================================
+
+NEXT STEPS:
+Chunk 5 will implement Questions 10–12 (Customer Experience & Financial Impact):
+  - Q10: How does customer satisfaction relate to churn? (satisfaction metric)
+  - Q11: Which customer segments are at highest churn risk? (risk segmentation)
+  - Q12: What is the financial impact of churn? (revenue-at-risk analysis)
+
+New Features in Chunk 5:
+  - Satisfaction Score dashboard and trend
+  - Risk segmentation matrix (multi-dimensional)
+  - Revenue impact calculations and waterfall charts
+  - Currency formatting for finance stakeholders
+  - Scenario modeler: "If we reduce churn by X%, revenue impact is…"
+
+New Page in Chunk 5:
+  - "Risk Segmentation & Financial Impact"
+  - "Satisfaction & Customer Experience"
+
+Data Model: No major changes; mostly adds measures and visuals to existing data
+
+DELIVERABLE: This Chunk 4 Guide (TXT file)
+  - File: Power_BI_Implementation_Guide_CHUNK_4.txt
+  - Save alongside Chunks 1–3 in project root
+
+POWER BI WORKBOOK STATUS:
+  - Expected .pbix size: 25–30 MB (added behavioral measures and visuals)
+  - Workbook: Churn_Analysis_Chunk4.pbix
+  - Test: All 3 new visuals render, filters work, measures calculate correctly
+
+================================================================================
+END OF CHUNK 4 - BEHAVIORAL & ENGAGEMENT ANALYSIS
+================================================================================

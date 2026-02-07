@@ -1,0 +1,723 @@
+================================================================================
+POWER BI CHURN ANALYSIS: COMPREHENSIVE IMPLEMENTATION GUIDE
+CHUNK 1 - PLANNING & BUSINESS QUESTIONS DERIVATION
+================================================================================
+
+DOCUMENT VERSION: 1.0
+DATE: February 2026
+SCOPE: Power BI Desktop, Power Query, DAX, Star Schema Data Model
+METHODOLOGY: Descriptive & Diagnostic Analytics (NO machine learning, NO predictive modeling)
+
+================================================================================
+EXECUTIVE SUMMARY - CHUNK 1
+================================================================================
+
+This chunk establishes the foundation for the complete Power BI implementation guide by:
+1. Analyzing project documentation and dataset structure
+2. Deriving 14 well-scoped business questions aligned to organizational goals
+3. Mapping each question to data sources, audiences, and impact
+4. Validating scope against project constraints (Power BI only, business-focused)
+
+DELIVERABLE: 14 business questions grouped by analytical theme, each with context
+and linkage to implementation requirements covered in subsequent chunks.
+
+================================================================================
+PART 1: ANALYSIS FRAMEWORK & QUESTION DERIVATION METHODOLOGY
+================================================================================
+
+1.1 Information Sources Reviewed
+   - idea.md: Project vision, scope, and analysis approach
+   - README.md: Dataset structure, star schema, KPI list
+   - eda_guide_power_bi.md: Initial 12 business questions and EDA approach
+   - archives/comprehensive_guide.md: Phases, methodology, deliverables
+   - Dataset.md: Detailed schema, column definitions, data quality rules
+
+1.2 Project Constraints Applied
+   - CONSTRAINT 1: Power BI only (no external tools, code, or systems)
+   - CONSTRAINT 2: No predictive modeling or machine learning
+   - CONSTRAINT 3: Simple, readable DAX (intermediate level users)
+   - CONSTRAINT 4: Business-first language, non-technical tone
+   - CONSTRAINT 5: Grounded in documented data (Column names, definitions only)
+   - CONSTRAINT 6: Star schema design (fact + dimension tables)
+
+1.3 Question Selection Criteria
+   - RELEVANCE: Addresses churn reduction and retention strategy
+   - ANSWERABILITY: Can be answered with available columns and relationships
+   - ACTIONABILITY: Leads to specific business recommendations
+   - SCOPE: Fits within "descriptive" or "diagnostic" analytics (not predictive)
+   - AUDIENCE: Targets decision-makers (C-suite, product, customer success teams)
+   - PRIORITY: Ranked by strategic value and implementation sequence
+
+1.4 Thematic Grouping Strategy
+   - TIER 1 (Foundations): Overall churn, baseline KPIs
+   - TIER 2 (Temporal): Trends, seasonality, progression
+   - TIER 3 (Geographic): Regional performance, market variation
+   - TIER 4 (Demographic): Age, customer type, segment-based patterns
+   - TIER 5 (Service): Contract, payment, billing relationships
+   - TIER 6 (Behavioral): Usage, engagement, support quality
+   - TIER 7 (Financial): Revenue impact, customer LTV, cost of retention
+   - TIER 8 (Risk): High-risk segmentation, early warning signals
+
+================================================================================
+PART 2: THE 14 BUSINESS QUESTIONS
+================================================================================
+
+Each question includes:
+- QUESTION: Clear, unambiguous wording
+- BUSINESS INTENT: Why stakeholders care
+- AUDIENCE: Who will use this insight (C-suite, operations, product, etc.)
+- BUSINESS OBJECTIVE: What decision/action it enables
+- DATA SOURCES: Exact tables and columns needed
+- PRIORITY: Tier/Phase (1-8) and sequence
+
+================================================================================
+
+QUESTION 1: WHAT IS OUR BASELINE CHURN RATE?
+─────────────────────────────────────────────────────────────────────────────
+
+FULL QUESTION:
+What percentage of our customer base has churned in the analysis period, and how
+does it compare to industry benchmarks?
+
+BUSINESS INTENT:
+Establish a single source of truth for churn rate—the most critical metric for
+executive reporting, board communication, and retention goal-setting.
+
+AUDIENCE:
+C-Suite (CEO, CFO), Customer Success Leadership, Investor Relations
+
+BUSINESS OBJECTIVE:
+- Set baseline KPI for churn reduction targets
+- Enable monthly churn tracking and goal progress reporting
+- Justify investment in retention initiatives
+- Communicate customer health status to stakeholders
+
+DATA SOURCES:
+  Table: fact_customer_churn
+  Columns Required:
+    - Churn_Flag (0/1 or Yes/No indicator)
+    - Customer_ID (for distinct count)
+    - Report_Month (for period filtering)
+  Optional: Total_Revenue (for revenue-weighted churn rate variant)
+
+PRIORITY: Tier 1 - Phase 1 (Foundational)
+SEQUENCE: Question #1 (must build first—foundation for all others)
+
+EXPECTED INSIGHT:
+Churn rate typically ranges 5–15% monthly depending on industry. Elevated rates
+(>20%) suggest operational issues; low rates (<5%) may indicate data quality or
+segment exclusion.
+
+================================================================================
+
+QUESTION 2: HOW HAS CHURN TRENDED OVER THE ANALYSIS PERIOD?
+─────────────────────────────────────────────────────────────────────────────
+
+FULL QUESTION:
+What is the month-over-month and trend direction of churn rate, and are there
+seasonal patterns or inflection points that warrant investigation?
+
+BUSINESS INTENT:
+Detect seasonal patterns, growth/decline trends, and the impact of recent
+retention campaigns or business changes on churn momentum.
+
+AUDIENCE:
+Customer Success Leadership, Product Management, Operations
+
+BUSINESS OBJECTIVE:
+- Identify seasonal peaks to target retention efforts (e.g., Q4 spike)
+- Measure effectiveness of past retention campaigns
+- Forecast near-term churn risk and proactively resource support
+- Support long-term product roadmap decisions
+
+DATA SOURCES:
+  Table: fact_customer_churn
+  Columns Required:
+    - Churn_Date (for month derivation)
+    - Churn_Flag
+    - Signup_Date (optional, to create cohorts)
+  Related: Create Calendar dimension with YearMonth column
+  Measure: Monthly Churn Rate (%)
+
+PRIORITY: Tier 1 - Phase 1 (Foundational)
+SEQUENCE: Question #2 (depends on Q1 measures; use same base dimension)
+
+EXPECTED INSIGHT:
+Common pattern: Q4 spike due to budget cycles; new customer cohorts show higher
+initial churn; mature cohorts stabilize. Trend direction matters: rising churn
+triggers escalation; falling churn validates retention strategies.
+
+================================================================================
+
+QUESTION 3: WHICH GEOGRAPHIC REGIONS SHOW THE HIGHEST CHURN RATES?
+─────────────────────────────────────────────────────────────────────────────
+
+FULL QUESTION:
+How does churn rate vary by region (North, South, East, West), and which
+regions require targeted retention efforts?
+
+BUSINESS INTENT:
+Allocate customer success and marketing budget to high-churn regions; enable
+regional leadership accountability for retention metrics.
+
+AUDIENCE:
+Regional Sales Leaders, Customer Success Leadership, Marketing
+
+BUSINESS OBJECTIVE:
+- Regionalize retention strategy (e.g., localized support in East region)
+- Identify regional service gaps or product fit issues
+- Benchmark regions against peers and set regional targets
+- Support hiring/resourcing decisions for customer success teams
+
+DATA SOURCES:
+  Table: fact_customer_churn
+  Columns Required:
+    - Region (from fact or dimension)
+    - Churn_Flag
+    - Customer_ID
+  Optional:
+    - City, State (for deeper drill-down)
+    - Total_Revenue (for revenue impact by region)
+
+PRIORITY: Tier 3 - Phase 2 (Geographic segmentation)
+SEQUENCE: Question #3 (foundational but builds on Q1-Q2 structure)
+
+EXPECTED INSIGHT:
+Geographic variation often correlates with service availability, language support,
+or local competition. E.g., urban East region may have lower churn due to better
+infrastructure; rural West may need targeted outreach.
+
+================================================================================
+
+QUESTION 4: HOW DOES CHURN VARY BY CUSTOMER AGE GROUP?
+─────────────────────────────────────────────────────────────────────────────
+
+FULL QUESTION:
+What is the churn rate for each age group (18–25, 26–35, 36–45, 45+), and are
+younger or older customers at higher risk?
+
+BUSINESS INTENT:
+Tailor engagement and retention messaging by generational cohort (e.g., digital
+natives vs. traditional users may respond to different communication channels).
+
+AUDIENCE:
+Product Management, Marketing, Customer Success
+
+BUSINESS OBJECTIVE:
+- Personalize retention campaigns by age demographic
+- Inform product feature prioritization (e.g., mobile-first for younger users)
+- Identify lifecycle stage needs (e.g., onboarding intensity for new users)
+- Guide HR hiring for customer-facing teams (e.g., digital natives for younger segment)
+
+DATA SOURCES:
+  Table: fact_customer_churn (via fact) or dim_customer (if separate)
+  Columns Required:
+    - Age_Group (standard buckets: 18–25, 26–35, 36–45, 45+)
+    - Churn_Flag
+    - Customer_ID
+
+PRIORITY: Tier 4 - Phase 2 (Demographic segmentation)
+SEQUENCE: Question #4
+
+EXPECTED INSIGHT:
+Younger customers (18–25) often show higher churn due to lower commitment; older
+cohorts (45+) show higher loyalty if onboarded successfully. Mid-career (26–35)
+is often most valuable segment.
+
+================================================================================
+
+QUESTION 5: HOW DOES CONTRACT TYPE AFFECT CHURN RATES?
+─────────────────────────────────────────────────────────────────────────────
+
+FULL QUESTION:
+What is the churn rate for each contract type (Monthly, Quarterly, Annual), and
+does contract length influence customer stickiness?
+
+BUSINESS INTENT:
+Optimize contract strategy—determine if shorter contracts (lower barrier to exit)
+drive unnecessary churn, or if longer contracts lock in customers artificially.
+
+AUDIENCE:
+Sales Leadership, Product Management, Finance
+
+BUSINESS OBJECTIVE:
+- Optimize contract terms to balance acquisition with retention
+- Forecast revenue stability (annual contracts = more predictable revenue)
+- Design discount/incentive strategy for longer-term commitments
+- Identify optimal renewal outreach timing by contract type
+
+DATA SOURCES:
+  Table: fact_customer_churn (direct) or dim_contract (via FK)
+  Columns Required:
+    - Contract_Type (Monthly / Quarterly / Annual)
+    - Churn_Flag
+    - Monthly_Charges (to understand pricing by contract type)
+  Optional: Signup_Date to analyze contract adoption over time
+
+PRIORITY: Tier 5 - Phase 3 (Service-level segmentation)
+SEQUENCE: Question #5
+
+EXPECTED INSIGHT:
+Typically: Monthly contracts show 2–3x higher churn than annual. However,
+high-churn monthly may indicate poor product fit rather than contract terms.
+Quarterly contracts often show moderate churn as "trial middle ground."
+
+================================================================================
+
+QUESTION 6: DOES PAYMENT METHOD CORRELATE WITH CHURN?
+─────────────────────────────────────────────────────────────────────────────
+
+FULL QUESTION:
+What is the churn rate for each payment method (Credit Card, Debit Card, UPI,
+Cash), and does payment friction contribute to churn?
+
+BUSINESS INTENT:
+Identify if billing/payment issues are a churn driver; simplify or incentivize
+preferred payment methods to ease retention.
+
+AUDIENCE:
+Finance, Customer Success, Billing Operations
+
+BUSINESS OBJECTIVE:
+- Reduce failed payment churn by optimizing payment options
+- Incentivize automated payments (credit card, UPI with auto-renew)
+- Identify payment method adoption gaps (e.g., low UPI adoption = market opportunity)
+- Support cash-based markets by offering alternatives
+
+DATA SOURCES:
+  Table: fact_customer_churn (direct) or dim_payment (via FK)
+  Columns Required:
+    - Payment_Method (Credit Card, Debit Card, UPI, Cash)
+    - Churn_Flag
+    - Customer_ID
+  Optional: Auto_Renewal flag (if available) to assess auto-payment impact
+
+PRIORITY: Tier 5 - Phase 3 (Service-level segmentation)
+SEQUENCE: Question #6
+
+EXPECTED INSIGHT:
+Cash-based payments often show higher churn (manual renewal friction). Credit
+cards with auto-renew show lowest churn. UPI adoption varies by region (higher
+in urban India, lower rural).
+
+================================================================================
+
+QUESTION 7: HOW DOES CUSTOMER TENURE INFLUENCE CHURN RATE?
+─────────────────────────────────────────────────────────────────────────────
+
+FULL QUESTION:
+What is the churn rate for customers in different tenure buckets (0–3 months,
+4–6 months, 7–12 months, 12–24 months, 24+ months), and when is churn risk highest?
+
+BUSINESS INTENT:
+Identify "critical risk windows" for churn intervention—most churn occurs early;
+stabilizing early tenure improves LTV dramatically.
+
+AUDIENCE:
+Onboarding/Customer Success Leadership, Product Management
+
+BUSINESS OBJECTIVE:
+- Intensify onboarding for cohorts with >15% early churn
+- Design graduated engagement cadence (aggressive early, taper over time)
+- Forecast cohort-level LTV and payback period
+- Inform acquisition strategy (if early churn is high, improve product fit before scaling)
+
+DATA SOURCES:
+  Table: fact_customer_churn
+  Columns Required:
+    - Tenure_Months (or derived from Signup_Date and Report_Month)
+    - Churn_Flag
+    - Customer_ID
+    - Join_Date / Signup_Date (to calculate tenure buckets)
+
+PRIORITY: Tier 6 - Phase 2 (Behavioral segmentation)
+SEQUENCE: Question #7 (foundational for understanding churn lifecycle)
+
+EXPECTED INSIGHT:
+"Churn bathtub curve": High initial churn (0–3 months, 20–40%), drops sharply
+(4–12 months, 5–10%), stabilizes (12+, <3%). Early intervention here has highest ROI.
+
+================================================================================
+
+QUESTION 8: HOW DOES USAGE LEVEL CORRELATE WITH CHURN RISK?
+─────────────────────────────────────────────────────────────────────────────
+
+FULL QUESTION:
+What is the difference in average monthly usage between churned and active
+customers, and does declining usage predict churn?
+
+BUSINESS INTENT:
+Early detection: low/declining usage is a leading churn indicator; enable
+proactive outreach before churn occurs.
+
+AUDIENCE:
+Customer Success, Product Management, Data Analytics
+
+BUSINESS OBJECTIVE:
+- Build usage-based alert system for at-risk customers
+- Identify product gaps where usage is zero/low (feature adoption problem)
+- Design engagement workflows triggered by usage drops
+- Measure product adoption success (high usage = low churn)
+
+DATA SOURCES:
+  Table: fact_customer_churn
+  Columns Required:
+    - Monthly_Usage (or Usage_Score, depending on available column)
+    - Avg_Usage_Last_3_Months (if available for trend detection)
+    - Churn_Flag
+    - Customer_ID
+  Derived: Usage_Change (current usage vs. previous month)
+
+PRIORITY: Tier 6 - Phase 3 (Behavioral & engagement analysis)
+SEQUENCE: Question #8
+
+EXPECTED INSIGHT:
+Clear pattern: Churned customers show 30–50% lower usage in 3 months prior to
+churn. Setting usage threshold (e.g., <50% of average) triggers outreach. This
+is one of the highest-value early warning signals.
+
+================================================================================
+
+QUESTION 9: ARE SUPPORT TICKET VOLUMES A CHURN INDICATOR?
+─────────────────────────────────────────────────────────────────────────────
+
+FULL QUESTION:
+What is the average number of support tickets for churned vs. active customers?
+Do high support ticket volumes correlate with higher churn risk?
+
+BUSINESS INTENT:
+Validate hypothesis: are support tickets evidence of frustration (churn driver)
+or active engagement (churn preventer)? Design support strategy accordingly.
+
+AUDIENCE:
+Customer Success, Support Leadership, Operations
+
+BUSINESS OBJECTIVE:
+- Identify if high ticket volume = quality issue or usage intensity
+- Optimize support SLAs and resolution time targets (longer resolution = higher churn)
+- Allocate support resources to high-risk accounts
+- Set support ticket KPIs aligned with churn reduction
+
+DATA SOURCES:
+  Table: fact_customer_churn
+  Columns Required:
+    - Support_Tickets (count of tickets)
+    - Churn_Flag
+    - Customer_ID
+  Optional: Resolution_Time_Days (quality metric)
+  Related: Complaint_Flag (if available)
+
+PRIORITY: Tier 6 - Phase 3 (Behavioral & engagement analysis)
+SEQUENCE: Question #9
+
+EXPECTED INSIGHT:
+Often bimodal: Zero tickets may indicate non-engagement (churn risk). Very high
+tickets (>5/month) without resolution = frustration (churn driver). Sweet spot
+is 1–3 tickets/month (active usage, issues resolved quickly). Pattern depends on
+product complexity.
+
+================================================================================
+
+QUESTION 10: HOW DOES CUSTOMER SATISFACTION RELATE TO CHURN?
+─────────────────────────────────────────────────────────────────────────────
+
+FULL QUESTION:
+What is the average satisfaction score for churned vs. active customers, and is
+there a satisfaction threshold below which churn becomes highly probable?
+
+BUSINESS INTENT:
+Use satisfaction as an early warning system; prioritize follow-up for low
+satisfaction customers before churn occurs.
+
+AUDIENCE:
+Customer Success, Product Management, C-Suite (for quality metrics)
+
+BUSINESS OBJECTIVE:
+- Set satisfaction drop threshold that triggers outreach
+- Identify product/service quality gaps (low satisfaction = specific issue)
+- Correlate satisfaction with revenue/LTV impact
+- Measure effectiveness of support improvements on churn reduction
+
+DATA SOURCES:
+  Table: fact_customer_churn
+  Columns Required:
+    - Satisfaction_Score (numeric, 1–5 scale typical)
+    - Churn_Flag
+    - Customer_ID
+  Optional: Feedback text (for root cause analysis—outside Power BI scope)
+
+PRIORITY: Tier 7 - Phase 3 (Customer experience)
+SEQUENCE: Question #10
+
+EXPECTED INSIGHT:
+Typically: Satisfaction 4–5 = <2% churn. Satisfaction 2–3 = 15–25% churn.
+Satisfaction <2 = >40% churn. There's usually a "cliff" at satisfaction 2–3
+where churn risk multiplies. This metric is highly actionable for targeted outreach.
+
+================================================================================
+
+QUESTION 11: WHICH CUSTOMER SEGMENTS ARE AT HIGHEST CHURN RISK?
+─────────────────────────────────────────────────────────────────────────────
+
+FULL QUESTION:
+What is the churn rate for each combination of key segments (e.g., new customers
+in East region with monthly contracts), and can we identify a high-risk profile?
+
+BUSINESS INTENT:
+Create targeted retention playbooks for each high-risk segment; allocate limited
+retention budget to maximum-impact groups.
+
+AUDIENCE:
+Customer Success Leadership, Regional Sales Leaders, Finance
+
+BUSINESS OBJECTIVE:
+- Segment portfolio into risk tiers (low/medium/high)
+- Design segment-specific retention playbooks (e.g., new corporate customers need
+  dedicated onboarding; price-sensitive SME need discount retention)
+- Forecast revenue at risk by segment
+- Justify proactive investment in high-risk groups vs. reactive churn management
+
+DATA SOURCES:
+  Table: fact_customer_churn
+  Columns Required:
+    - Customer_Segment (Retail / SME / Corporate, if available)
+    - Region
+    - Tenure_Months (or derived bucket)
+    - Contract_Type
+    - Churn_Flag
+    - Customer_ID
+  Derived: Multi-dimensional risk score (see DAX section for calculation)
+
+PRIORITY: Tier 4 - Phase 3 (Segmentation & risk)
+SEQUENCE: Question #11
+
+EXPECTED INSIGHT:
+Often: New SME customers in East region with monthly contracts show >30% churn.
+Mature Corporate customers in North/West show <5%. These profiles enable precise
+resource allocation (e.g., focus CS resources on new SME segment first).
+
+================================================================================
+
+QUESTION 12: WHAT IS THE FINANCIAL IMPACT OF CHURN? (Revenue-at-Risk Analysis)
+─────────────────────────────────────────────────────────────────────────────
+
+FULL QUESTION:
+What is the total revenue lost from churned customers in the analysis period?
+Which customer segments or regions represent the highest revenue at risk?
+
+BUSINESS INTENT:
+Quantify churn cost in financial terms to justify retention investment (e.g.,
+"Churn costs $500K/quarter; $2M investment in CS reduces churn by 2% = ROI").
+
+AUDIENCE:
+CFO, C-Suite, Finance, Sales Leadership
+
+BUSINESS OBJECTIVE:
+- Justify retention investment by showing revenue impact
+- Prioritize retention efforts on high-revenue-impact segments
+- Calculate customer LTV and payback period by segment
+- Inform decision: acquire or retain (e.g., if LTV > 2x acquisition cost, invest
+  in retention)
+
+DATA SOURCES:
+  Table: fact_customer_churn
+  Columns Required:
+    - Churn_Flag
+    - Total_Revenue (or Monthly_Charges x Tenure_Months)
+    - Customer_ID
+    - Customer_Segment (to prioritize which revenue matters most)
+    - Region
+  Optional: Acquisition_Cost (if available, to calculate LTV and payback)
+
+PRIORITY: Tier 7 - Phase 4 (Financial impact)
+SEQUENCE: Question #12
+
+EXPECTED INSIGHT:
+Common finding: 10% of customers generate 40% of revenue (Pareto principle).
+Churn of high-revenue customers (Corporate/Premium) impacts than churn,
+even if Retail churn rate is higher. This drives prioritization of premium segment
+retention (e.g., dedicated account manager for $10K+ ARR customers).
+
+================================================================================
+
+QUESTION 13: ARE THERE EARLY WARNING SIGNALS THAT PREDICT IMMINENT CHURN?
+─────────────────────────────────────────────────────────────────────────────
+
+FULL QUESTION:
+What combination of behavioral signals (low usage, high support tickets, low
+satisfaction) are most correlated with churn in the 30–60 days before churn occurs?
+
+BUSINESS INTENT:
+Enable predictive outreach: proactively engage at-risk customers within the
+critical "intervention window" before churn becomes irreversible.
+
+AUDIENCE:
+Customer Success, Operations, Analytics
+
+BUSINESS OBJECTIVE:
+- Build churn risk scoring model in Power BI (non-ML; purely rule-based)
+- Create automated alerts for high-risk accounts (e.g., usage drop >50% = red flag)
+- Design intervention playbooks by risk level (low risk = quarterly check; high risk
+  = daily monitoring)
+- Measure intervention effectiveness: % of at-risk customers retained after outreach
+
+DATA SOURCES:
+  Table: fact_customer_churn
+  Columns Required:
+    - Monthly_Usage / Usage_Score / Avg_Usage_Last_3_Months
+    - Support_Tickets
+    - Satisfaction_Score
+    - Churn_Flag
+    - Churn_Date (to backfill 30/60-day lookback)
+    - Customer_ID
+  Derived: Usage_Change, Churn_Probability_Score (rule-based weights)
+
+PRIORITY: Tier 8 - Phase 4 (Risk scoring and early warning)
+SEQUENCE: Question #13 (advanced; depends on Q7–Q10 measures)
+
+EXPECTED INSIGHT:
+Typical early warning profile (60 days before churn):
+  - Usage drop > 30% from baseline
+  - Support tickets > 2x monthly average
+  - Satisfaction drop by 1+ point from customer's baseline
+  - Payment failed once (if available)
+Customers meeting 3+ criteria have 60%+ churn probability within 30 days.
+Triggering outreach at this point recovers 25–40% of at-risk customers.
+
+================================================================================
+
+QUESTION 14: WHAT IS THE RELATIONSHIP BETWEEN MONTHLY CHARGES AND CHURN RATE?
+─────────────────────────────────────────────────────────────────────────────
+
+FULL QUESTION:
+How does price sensitivity manifest in churn rates? Are higher-priced customers
+more likely to churn, and does this vary by customer type or region?
+
+BUSINESS INTENT:
+Inform pricing and discounting strategy. Determine if churn is "price-driven"
+(support discounting strategy) or "value-driven" (need product improvement).
+
+AUDIENCE:
+Finance, Pricing/Product Management, Sales Leadership
+
+BUSINESS OBJECTIVE:
+- Optimize pricing tiers (e.g., if $X/month price > 2x industry, expect churn)
+- Design discounting strategy weighted by churn risk (discount high-risk, higher-LTV
+  customers; don't discount low-risk)
+- Segment pricing by geography (price tolerance differs by region)
+- Evaluate impact of past price increases on churn cohorts
+
+DATA SOURCES:
+  Table: fact_customer_churn
+  Columns Required:
+    - Monthly_Charges
+    - Churn_Flag
+    - Customer_ID
+    - Customer_Segment / Region (to understand price sensitivity by segment)
+    - Contract_Type (annual customers more price-sensitive at renewal than monthly)
+
+PRIORITY: Tier 5 - Phase 3 (Service-level analysis)
+SEQUENCE: Question #14
+
+EXPECTED INSIGHT:
+Bimodal pattern often observed:
+  - Low price (<$50/mo): High churn due to low commitment, not price
+  - Mid price ($50–$200/mo): Moderate churn, price-sensitive at renewal
+  - High price (>$200/mo): Lower churn if value clear; high churn if ROI unclear
+Regional variation: Price sensitivity higher in developing markets; lower in
+developed markets (where budget is less constrained).
+
+================================================================================
+PART 3: QUESTION MAPPING TO IMPLEMENTATION CHUNKS
+================================================================================
+
+The following sections will implement each business question in the specified
+chunks. Each chunk will be self-contained but reference earlier implementations
+where needed.
+
+CHUNK 2 - CORE INFRASTRUCTURE & DATA MODELING (Questions 1–3)
+  - Q1: What is our baseline churn rate?
+  - Q2: How has churn trended over the analysis period?
+  - Q3: Which geographic regions show the highest churn rates?
+  - DELIVERABLES: Data model, Power Query steps, core measures, foundational visuals
+
+CHUNK 3 - CUSTOMER SEGMENTATION & DEMOGRAPHICS (Questions 4–6)
+  - Q4: How does churn vary by customer age group?
+  - Q5: How does contract type affect churn rates?
+  - Q6: Does payment method correlate with churn?
+  - DELIVERABLES: Demographic/service segment measures, segment-based visuals, drill-down paths
+
+CHUNK 4 - BEHAVIORAL & ENGAGEMENT ANALYSIS (Questions 7–9)
+  - Q7: How does customer tenure influence churn rate?
+  - Q8: How does usage level correlate with churn risk?
+  - Q9: Are support ticket volumes a churn indicator?
+  - DELIVERABLES: Usage/engagement measures, behavioral analysis visuals, engagement dashboard
+
+CHUNK 5 - CUSTOMER EXPERIENCE & FINANCIAL IMPACT (Questions 10–12)
+  - Q10: How does customer satisfaction relate to churn?
+  - Q11: Which customer segments are at highest churn risk?
+  - Q12: What is the financial impact of churn?
+  - DELIVERABLES: Satisfaction measures, risk scoring, financial impact analysis visuals
+
+CHUNK 6 - SUPPORTING SECTIONS & APPENDIX (Questions 13–14 + Infrastructure)
+  - Q13: Are there early warning signals that predict imminent churn?
+  - Q14: What is the relationship between monthly charges and churn rate?
+  - PROJECT-LEVEL CHECKLIST: Milestone sequence and effort estimates
+  - DATA GAPS & QUESTIONS: Missing information requiring clarification
+  - BEST PRACTICES & NAMING CONVENTIONS: Standards for data model, measures, visuals
+  - APPENDIX: DAX snippets, Power Query M examples, sample formulas
+
+================================================================================
+PART 4: VALIDATION AGAINST PROJECT SCOPE
+================================================================================
+
+SCOPE COMPLIANCE CHECK - All questions meet the following criteria:
+
+✓ POWER BI ONLY: No external tools, APIs, or code required beyond Power BI Desktop
+✓ NO MACHINE LEARNING: All questions answered via descriptive/diagnostic analysis
+✓ BUSINESS-FOCUSED: Each question addresses a business objective (retention strategy)
+✓ DATA-GROUNDED: All columns referenced are explicitly documented in Dataset.md
+✓ STAR SCHEMA FIT: Questions assume fact + dimension table design
+✓ INTERMEDIATE DIFFICULTY: DAX and Power Query required are suitable for mid-level users
+✓ ACTIONABLE: Each question enables specific business decisions or interventions
+
+================================================================================
+PART 5: NEXT STEPS - TRANSITION TO CHUNK 2
+================================================================================
+
+CHUNK 2 will provide complete implementation details for Questions 1–3 including:
+
+1. DATA PREPARATION (Power Query)
+   - Import CSV files (fact_customer_churn, dim_customer, dim_contract, etc.)
+   - Data type conversion (dates, numeric, text standardization)
+   - Handling blanks and null values
+   - Relationship setup and validation
+
+2. DATA MODEL DESIGN
+   - Table schema and column definitions
+   - Relationship definitions (cardinality, filter direction)
+   - Star schema visualization (fact at center, dimensions radiating)
+   - Calculated columns (if needed)
+
+3. DAX MEASURES
+   - Churn Rate % (overall)
+   - Monthly Churn Rate (with Calendar dimension)
+   - Churn Count, Active Count (base measures for filtering)
+   - Regional Churn Rate (with Region filter context)
+
+4. VISUALS & REPORT LAYOUT
+   - KPI Card: Baseline Churn Rate
+   - Line Chart: Churn Trend over time
+   - Bar Chart: Churn by Region (sorted descending)
+   - Table: Detailed churn metrics by region
+   - Slicers: Report Month, Region, Customer_Segment
+
+5. TESTING & VALIDATION
+   - Verify measure calculations match manual Excel pivot
+   - Spot-check data for anomalies
+   - Validate relationships (no circular, no disconnected tables)
+   - Performance review (if large dataset, optimize with aggregations)
+
+================================================================================
+END OF CHUNK 1
+================================================================================

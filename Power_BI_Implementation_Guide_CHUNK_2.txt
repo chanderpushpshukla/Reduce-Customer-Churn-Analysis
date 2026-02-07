@@ -1,0 +1,1171 @@
+================================================================================
+POWER BI CHURN ANALYSIS: COMPREHENSIVE IMPLEMENTATION GUIDE
+CHUNK 2 - CORE INFRASTRUCTURE & DATA MODELING (QUESTIONS 1–3)
+================================================================================
+
+DOCUMENT VERSION: 1.0
+DATE: February 2026
+SCOPE: Questions 1–3 (Baseline Churn, Trend Analysis, Regional Churn)
+COMPLEXITY: Intermediate—introduces data model, measures, and foundational visuals
+
+================================================================================
+EXECUTIVE SUMMARY - CHUNK 2
+================================================================================
+
+This chunk implements the foundational analytics layer for churn analysis:
+- Questions 1–3 address executive-level KPIs (baseline, trend, regional performance)
+- Establishes the data model, Power Query workflows, and core DAX measures
+- Builds the "Executive Dashboard" page and supporting infrastructure
+- All subsequent chunks will extend this foundation
+
+DELIVERABLES:
+1. Complete data import and transformation steps (Power Query)
+2. Star schema data model design with relationships and keys
+3. Five core DAX measures (Churn Rate, Churn Count, Active Count, etc.)
+4. Three visuals (KPI card, line chart, bar chart) mapped to Q1–Q3
+5. Report page layout with slicers and filters
+6. Testing checklist and sample validation queries
+
+ESTIMATED EFFORT: Medium (4–6 hours for a developer new to Power BI)
+
+================================================================================
+SECTION 1: DATA REQUIREMENTS & SOURCES (Q1–Q3)
+================================================================================
+
+1.1 TABLES & COLUMNS REQUIRED
+
+Table: fact_customer_churn (PRIMARY FACT TABLE)
+Required Columns:
+  - Customer_ID (text): Unique customer identifier [PRIMARY KEY]
+  - Churn_Flag (Yes/No or 1/0): Indicator of customer churn status [FACT COLUMN]
+  - Churn_Date (date): Date when customer churned [NULLABLE if active]
+  - Join_Date or Signup_Date (date): Customer onboarding date
+  - Report_Month (date or text): Reporting period [DERIVED COLUMN]
+  - Region (text): Geographic region (North, South, East, West)
+  - Monthly_Charges (decimal): Monthly subscription fee
+  - Tenure_Months (numeric): Customer tenure in months [OPTIONAL—can derive]
+
+Table: dim_customer (OPTIONAL DIMENSION)
+  - Customer_ID (text): Foreign key to fact
+  - Region (text): If Region not in fact table
+  - Customer_Segment (text): Segment classification (Retail, SME, Corporate)
+
+Table: Calendar / Date Dimension (REQUIRED FOR TIME SERIES)
+  - Create in Power BI DAX (see Section 3.3)
+  - Columns: Date, YearMonth (text), MonthName, Year, Quarter
+
+1.2 SOURCE FILE LOCATIONS
+
+CSV Files to Import:
+  - fact_customer_churn.csv (main file, 30,000+ rows)
+  - dim_customer.csv (optional, if customer demographics separate)
+  - dim_contract.csv (optional, for Q5 later)
+  - dim_payment.csv (optional, for Q6 later)
+
+Compression: All files should be in project /dataset folder
+
+1.3 DATA TYPES & VALIDATION
+
+Column             | Expected Type | Validation Rule
+─────────────────────────────────────────────────────────────────────────────
+Customer_ID        | Text          | Non-null, unique or unique per month
+Churn_Flag         | Yes/No (bool) | Only 0/1 or TRUE/FALSE
+Churn_Date         | Date          | NULL if active; >= Join_Date if churned
+Join_Date          | Date          | Must be <= Report_Month
+Report_Month       | Date/YearMo   | Consistent format (YYYY-MM)
+Region             | Text          | Only N,S,E,W values (case standard)
+Monthly_Charges    | Decimal       | No negative values
+Tenure_Months      | Whole number  | >= 0; typically 0–60 range
+
+================================================================================
+SECTION 2: POWER QUERY DATA PREPARATION (Step-by-Step)
+================================================================================
+
+2.1 LOAD DATA INTO POWER QUERY
+
+STEP 1: Open Power BI Desktop
+  - Launch Power BI Desktop (free from microsoft.com)
+  - Start new blank report (File > New)
+  - Save project as: "Churn_Analysis.pbix"
+
+STEP 2: Import fact_customer_churn.csv
+  - Home tab > Get Data > Text/CSV
+  - Navigate to /dataset/fact_customer_churn.csv
+  - Click Load Data (or Transform Data for editing)
+  - Power Query Editor opens (if you chose Transform Data)
+  - Review columns: Verify all expected columns present
+
+CODE REFERENCE (if manual M script preferred):
+  let
+    Source = Csv.Document(File.Contents("fact_customer_churn.csv"),
+      [Delimiter=",", Columns=null, Encoding=1252, QuoteStyle=QuoteStyle.Csv]),
+    #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true])
+  in
+    #"Promoted Headers"
+
+STEP 3: Configure Column Data Types
+  - In Power Query Editor, select each column and set data type:
+    
+    Column             | UI Action
+    ────────────────────────────────────────────────────────────────────────
+    Customer_ID        | Data Type > Text (ABC icon)
+    Churn_Flag         | Data Type > Text or Boolean (if 0/1, convert later)
+    Churn_Date         | Data Type > Date
+    Join_Date          | Data Type > Date
+    Report_Month       | Data Type > Date (if in YYYY-MM-DD format)
+    Region             | Data Type > Text
+    Monthly_Charges    | Data Type > Decimal Number
+    Tenure_Months      | Data Type > Whole Number
+    (Other columns)    | Infer type based on content
+
+NOTE: If Report_Month column doesn't exist, you'll CREATE it in STEP 4.
+
+CODE REFERENCE (Data Type Transformation):
+  let
+    #"Changed Type" = Table.TransformColumnTypes(Source,{
+      {"Customer_ID", type text},
+      {"Churn_Flag", type logical},
+      {"Churn_Date", type date},
+      {"Join_Date", type date},
+      {"Report_Month", type date},
+      {"Region", type text},
+      {"Monthly_Charges", type number},
+      {"Tenure_Months", type number}
+    })
+  in
+    #"Changed Type"
+
+STEP 4: CREATE Report_Month Column (if missing)
+  - Add Column > Custom Column
+  - Column Name: Report_Month
+  - Formula: =Date.StartOfMonth([Churn_Date]) if Churn_Flag exists, else use last day of month from data
+    
+    ALTERNATIVE FORMULA (if using a separate Report_Month column from source):
+      =if [Churn_Date] <> null then Date.AddMonths(Date.StartOfMonth([Churn_Date]), 0) else null
+
+  - Click OK
+
+CODE REFERENCE (M script for adding Report_Month):
+  #"Added Month Column" = Table.AddColumn(#"Changed Type", "Report_Month",
+    each if [Churn_Date] <> null then
+      Date.StartOfMonth([Churn_Date])
+    else
+      Date.StartOfMonth([Join_Date]) // or null if no activity month
+  , type date)
+
+STEP 5: STANDARDIZE TEXT COLUMNS
+  - Select Region column > Transform > Format > Trim (remove spaces)
+  - Select Region > Transform > Clean > Lowercase (if mixed case)
+  - Verify unique values: Right-click > Remove Duplicates (or use Group By Count to inspect)
+
+CODE REFERENCE (Trim & Lowercase):
+  #"Trimmed Region" = Table.TransformColumns(Source,{
+    {"Region", Text.Trim, type text}
+  }),
+  #"Lowercased Region" = Table.TransformColumns(#"Trimmed Region",{
+    {"Region", Text.Lower, type text}
+  })
+
+STEP 6: HANDLE MISSING VALUES
+  
+  For Churn_Flag column:
+    - Replace Values: (Select Churn_Flag column)
+    - Find: "" (blank)
+    - Replace: 0 (assuming blank = not churned)
+    - Select Replace All
+
+  For Churn_Date column:
+    - Leave NULL/blank as-is (NULL indicates active customer)
+    - Do NOT fill null dates—they are meaningful
+
+  For Region column:
+    - If nulls exist, consider replacing with "Unknown" or filtering them out
+    - Replace Values: Find: error, Replace: "Unknown"
+
+  For Monthly_Charges:
+    - If blanks exist, use average fill: Group By > Average, then merge back
+    - OR: Replace with column average (Home > Replace Values > Replace errors with 0)
+
+CODE REFERENCE (Fill missing values):
+  #"Replaced Missing Charges" = Table.ReplaceValue(#"Original", null, List.Average(Number.FromText(Table.Column(..."Monthly_Charges"))),
+    Replacer.ReplaceValue, {"Monthly_Charges"})
+
+STEP 7: REMOVE DUPLICATES (if any)
+  - Home tab > Remove Rows > Remove Duplicates
+  - Select columns: Customer_ID + Report_Month + Region (if composite key)
+  - Click OK
+
+CODE REFERENCE (Remove Duplicates):
+  #"Removed Duplicates" = Table.Distinct(Source, {"Customer_ID", "Report_Month"})
+
+STEP 8: CLOSE & APPLY
+  - Click Close & Apply (top-left corner)
+  - Power Query closes; data loads into Power BI data model
+  - Verify in Data view: Scroll right to check all columns loaded
+
+EXPECTED RESULT: 25,000–30,000 rows loaded with clean columns
+
+================================================================================
+SECTION 3: DATA MODEL DESIGN & STAR SCHEMA
+================================================================================
+
+3.1 STAR SCHEMA ARCHITECTURE
+
+Diagram:
+```
+                    ┌──────────────────┐
+                    │   dim_Calendar   │
+                    │  (Date, MonthID) │
+                    └────────┬─────────┘
+                             │
+                   (inactive) │ (one-to-many)
+                             │
+        ┌────────────────────────────────────────┐
+        │     fact_customer_churn               │
+        │  (Customer_ID, Churn_Flag,...)        │
+        └────────────────────────────────────────┘
+          │                            │           │
+    (M:1) │                  (M:1)     │       (M:1)│
+          │                            │           │
+    ┌─────▼──────────┐         ┌───────▼─────┐ ┌──▼─────────────┐
+    │  dim_Customer  │         │ dim_Region  │ │ dim_Contract   │
+    │ (Region,Seg)   │         │ (Region,... │ │ (Contract_Type)│
+    └────────────────┘         └─────────────┘ └────────────────┘
+
+(Note: Simplified; other dimensions added in Chunks 3–5)
+
+3.2 TABLE DEFINITIONS
+
+TABLE 1: dim_Calendar
+Purpose: Enable time-based filtering and calculations (e.g., monthly trends)
+Creation: DAX formula in Power BI (NOT imported from CSV)
+
+CREATE dimCalendar USING DAX:
+  1. In Power BI, go to Modeling > New Table
+  2. Copy/paste this formula:
+
+    Calendar = CALENDAR(MIN('fact_customer_churn'[Join_Date]), MAX(IFERROR('fact_customer_churn'[Churn_Date], TODAY())))
+
+  3. Add calculated columns to Calendar:
+    
+    Column Name       | DAX Formula                                           | Purpose
+    ───────────────────────────────────────────────────────────────────────────────────
+    YearMonth_ID      | INT(FORMAT([Date], "YYYYMM"))                        | For sorting
+    YearMonth_Text    | FORMAT([Date], "YYYY-MM")                            | Display
+    MonthName         | FORMAT([Date], "mmmm")                               | User-friendly
+    Year              | YEAR([Date])                                         | For slicers
+    Quarter           | "Q" & ROUNDUP(MONTH([Date])/3,0)                     | For trends
+    Date_Key          | INT(FORMAT([Date], "YYYYMMDD"))                      | Join key
+
+3.3 RELATIONSHIPS (CARDINALITY & FILTER DIRECTION)
+
+Relationship 1: Calendar to fact_customer_churn (Churn_Date)
+  - FROM: dim_Calendar[Date]
+  - TO: fact_customer_churn[Churn_Date]
+  - Cardinality: One-to-Many (one date → many churn rows)
+  - Filter Direction: SINGLE (calendar doesn't filter fact; fact filters calendar)*
+  - Active: YES (default relationship for time analysis)
+  
+  *Note: Use SINGLE direction if you want dates with NO churn to appear empty (realistic);
+  use BOTH if you want them to appear as zero churn.
+  RECOMMENDATION: Use SINGLE initially, then adjust based on visualization needs.
+
+Relationship 2: dim_Customer to fact_customer_churn (Customer_ID)
+  - FROM: dim_customer[Customer_ID]
+  - TO: fact_customer_churn[Customer_ID]
+  - Cardinality: One-to-Many
+  - Filter Direction: SINGLE
+  - Active: YES
+
+Relationship 3: dim_Contract to fact_customer_churn (Contract_Type)
+  - FROM: dim_contract[Contract_Type]
+  - TO: fact_customer_churn[Contract_Type]
+  - Cardinality: One-to-Many
+  - Filter Direction: SINGLE
+  - Active: YES (added in Chunk 3; reference here for completeness)
+
+3.4 CARDINALITY EXPLANATION
+
+Cardinality: Describes the relationship between tables
+  - ONE-TO-MANY: One row in dimension matches MANY rows in fact
+    Example: One Customer can have multiple transactions
+  - MANY-TO-ONE: Vice versa (less common in star schema)
+  - MANY-TO-MANY: (avoid without bridge table; creates ambiguity)
+
+Filter Direction: Controls which filters propagate across relationships
+  - SINGLE: Dimension filters fact ONLY
+    Example: Filter Region → shows only facts in that region
+  - BOTH: Bidirectional filtering (slower; use sparingly)
+  - NONE: No filter propagation (rarely used)
+
+RECOMMENDATION FOR THIS PROJECT: All relationships ONE-TO-MANY, SINGLE filter direction.
+
+3.5 CREATING RELATIONSHIPS IN POWER BI
+
+Method 1: Auto-Detection (Recommended)
+  - Power BI auto-detects relationships based on matching column names
+  - Close Power Query, go to Model view (left panel > Model icon)
+  - If relationships not auto-detected, proceed to Method 2
+
+Method 2: Manual Relationship Creation
+  - Model view > Manage Relationships
+  - Click New
+  - TABLE 1 (FROM): dim_Calendar
+    COLUMN: Date
+  - TABLE 2 (TO): fact_customer_churn
+    COLUMN: Churn_Date
+  - Cardinality: One-to-Many
+  - Cross Filter Direction: Single
+  - Click OK
+  - Repeat for additional relationships
+
+VERIFICATION:
+  - Model view should show lines connecting dimension to fact table
+  - No circular loops (fact → dimension 1 → fact = bad)
+  - No unrelated tables floating unconnected (add relationship or delete table)
+
+================================================================================
+SECTION 4: DAX MEASURES FOR QUESTIONS 1–3
+================================================================================
+
+4.1 BASE MEASURES (Required for all calculations)
+
+These measures form the foundation for churn M metrics.
+
+MEASURE 1: Total Customers (Count Distinct)
+Purpose: Count unique customers in filtered context
+Audience: Any KPI requiring customer count
+
+DAX CODE:
+  Total Customers = DISTINCTCOUNT('fact_customer_churn'[Customer_ID])
+
+Use Case:
+  - Denominator for churn rate
+  - Context: Filters like Region or Report_Month apply here
+  - Example: 1000 customers in East region in Jan
+
+MEASURE 2: Churned Customers (Count)
+Purpose: Count customers with Churn_Flag = True/1
+Audience: Track actual churn volume
+
+DAX CODE:
+  Churned Customers = CALCULATE(
+    COUNTROWS('fact_customer_churn'),
+    'fact_customer_churn'[Churn_Flag] = TRUE()
+  )
+
+Comment: Uses CALCULATE() to apply Churn_Flag filter within any other context
+
+Use Case:
+  - Numerator for churn rate
+  - Example: 150 customers churned in Jan
+
+MEASURE 3: Active Customers (Count Distinct)
+Purpose: Count customers NOT churned (Churn_Flag = 0/FALSE)
+Audience: Health metric; complement to churned count
+
+DAX CODE:
+  Active Customers = CALCULATE(
+    DISTINCTCOUNT('fact_customer_churn'[Customer_ID]),
+    'fact_customer_churn'[Churn_Flag] = FALSE()
+  )
+
+Use Case:
+  - Monitor active user base
+  - Total Customers = Active + Churn (validation check)
+  - Example: 850 customers active in Jan (out of 1000)
+
+4.2 CORE KPI MEASURES (Questions 1–3)
+
+MEASURE 4: Churn Rate % (Q1 - Baseline)
+Purpose: Calculate percentage of customers who churned in analysis period
+Audience: Executive dashboard, board reporting, retention KPI tracking
+
+DAX CODE:
+  Churn Rate % = 
+    VAR TotalCount = DISTINCTCOUNT('fact_customer_churn'[Customer_ID])
+    VAR ChurnCount = CALCULATE(
+      DISTINCTCOUNT('fact_customer_churn'[Customer_ID]),
+      'fact_customer_churn'[Churn_Flag] = TRUE()
+    )
+    RETURN
+      IF(TotalCount = 0, BLANK(), DIVIDE(ChurnCount, TotalCount) * 100)
+
+Comment breaks down:
+  - VAR TotalCount: Store distinct customer count (avoid recalculation)
+  - VAR ChurnCount: Store churned count
+  - RETURN: Divide churn by total, multiply by 100 for percentage
+  - IF condition: Avoid division by zero if no customers in filter
+
+Use Case:
+  - Display on KPI Card visual
+  - Example: 15% churn rate (150 churned / 1000 total)
+  - Format: Number, 1 decimal place, percent symbol (%)
+
+MEASURE 5: Churn Rate % Prior Month (for trend context)
+Purpose: Compare current month churn to previous month (optional; for Q2 context)
+Audience: Executive, supports trend analysis
+
+DAX CODE:
+  Churn Rate % Prior Month =
+    VAR PriorMonth = CALCULATE(
+      [Churn Rate %],
+      'dim_Calendar'[Date] = DATE(YEAR(TODAY()), MONTH(TODAY())-1, 1) // Last month
+    )
+    RETURN PriorMonth
+
+Comment: CALCULATE shifts filter context to prior month
+Note: This is simplified; for robust multi-month comparison, use MORE complex logic
+      (see Chunk 2 appendix for advanced prior-period formulas)
+
+MEASURE 6: Monthly Churn Rate % (Q2 - Trend Analysis)
+Purpose: Calculate churn rate for each month (time series)
+Audience: Trend analysis, seasonality detection
+
+DAX CODE:
+  Monthly Churn Rate % =
+    VAR MonthCustomers = CALCULATE(
+      DISTINCTCOUNT('fact_customer_churn'[Customer_ID]),
+      ALL('fact_customer_churn'[Churn_Flag]) // Count all, then filter
+    )
+    VAR MonthChurned = CALCULATE(
+      DISTINCTCOUNT('fact_customer_churn'[Customer_ID]),
+      'fact_customer_churn'[Churn_Flag] = TRUE(),
+      ALL('fact_customer_churn'[Churn_Flag])
+    )
+    RETURN
+      IF(MonthCustomers = 0, BLANK(), DIVIDE(MonthChurned, MonthCustomers) * 100)
+
+Use Case:
+  - Plot on Line Chart (X: Month, Y: Monthly Churn Rate %)
+  - Identify seasonality (e.g., Q4 spike)
+  - Example: Jan 12%, Feb 14%, Mar 13%, Apr 18% (Q1 trending up)
+
+MEASURE 7: Regional Churn Rate % (Q3 - Geographic Analysis)
+Purpose: Calculate churn rate for each region (no special measure needed, just filter)
+Audience: Regional leaders, geographic strategy
+
+DAX CODE:
+  Regional Churn Rate = [Churn Rate %]
+  // (No new measure; [Churn Rate %] automatically calculates per region when Region is in filter context)
+
+OR if you want explicit regional measure:
+
+  Regional Churn Rate % =
+    VAR RegionalTotal = DISTINCTCOUNT('fact_customer_churn'[Customer_ID])
+    VAR RegionalChurn = CALCULATE(
+      DISTINCTCOUNT('fact_customer_churn'[Customer_ID]),
+      'fact_customer_churn'[Churn_Flag] = TRUE()
+    )
+    RETURN
+      IF(RegionalTotal = 0, BLANK(), DIVIDE(RegionalChurn, RegionalTotal) * 100)
+
+Use Case:
+  - Plot on Bar Chart (X: Region, Y: Regional Churn Rate %)
+  - Sort descending to highlight highest-churn regions
+  - Example: East 22%, South 18%, West 14%, North 12%
+
+4.3 FORMATTING & DISPLAY SETTINGS
+
+Apply these formatting rules to measures for presentation:
+
+Measure Name              | Format             | Decimal Places | Display Example
+─────────────────────────────────────────────────────────────────────────────────
+Total Customers           | Whole Number       | 0              | 1,250
+Churned Customers         | Whole Number       | 0              | 187
+Active Customers          | Whole Number       | 0              | 1,063
+Churn Rate %              | Percentage         | 1              | 15.0%
+Monthly Churn Rate %      | Percentage         | 1              | 18.5%
+Regional Churn Rate %     | Percentage         | 1              | 22.1%
+
+HOW TO FORMAT IN POWER BI:
+  1. Select measure in Fields pane (right, Model section)
+  2. Right-click > Format > Choose format type
+  3. Set decimal places
+  4. Click away
+
+================================================================================
+SECTION 5: VISUALS FOR QUESTIONS 1–3
+================================================================================
+
+5.1 VISUAL 1: KPI CARD FOR BASELINE CHURN (Q1)
+
+PURPOSE: Display current churn rate as a prominent, executive-friendly KPI
+
+Visual Type: Card (single number with label)
+
+FIELD CONFIGURATION:
+  - VALUES: Drag [Churn Rate %] measure
+  
+FORMATTING (RIGHT-CLICK on visual > Format):
+  
+  Data Labels:
+    - Category Labels: OFF
+    - Value: ON
+    - Color: #2E75B6 (blue)
+    - Font Size: 35pt (large, prominent)
+    - Display Unit: Percentage (%)
+  
+  Title:
+    - Title Text: "Churn Rate"
+    - Title Alignment: Center
+    - Title Font Size: 14pt
+    - Background Color: #F2F2F2 (light gray)
+  
+  Cards Section (visual-specific):
+    - Outline Style: Rounded
+    - Shadow: ON
+    - Background: White
+    - Transparency: 0%
+
+FILTERS TO APPLY:
+  - Report_Month: Select current month or YTD
+  - Region: (Leave blank for global; OR select specific region for dashboard variant)
+  - Customer_Segment: (If needed, leave blank for overall)
+
+EXPECTED DISPLAY:
+  ┌─────────────────────────────┐
+  │      Churn Rate             │
+  │        15.2%                │
+  └─────────────────────────────┘
+
+POSITIONING ON REPORT PAGE:
+  - Top-left, above other KPIs
+  - Occupy 1 column × 1 row (approx. 300px × 200px)
+  - Leave 20px margin on left
+
+DRILL-THROUGH / INTERACTIVITY:
+  - None for this card; it's a summary KPI
+  - Clicking card does nothing (intentional—summary metric)
+
+5.2 VISUAL 2: LINE CHART FOR TREND ANALYSIS (Q2)
+
+PURPOSE: Show monthly churn rate trend over time (e.g., last 12 months)
+
+Visual Type: Line Chart
+
+FIELD CONFIGURATION:
+  - AXIS (X-axis): Drag [YearMonth_Text] from dim_Calendar
+    - Alternatively: [Date] (auto-groups to month if time-based)
+    - SORT: By [YearMonth_ID] to ensure chronological order
+  
+  - VALUES (Y-axis): Drag [Monthly Churn Rate %] measure
+  
+  - LEGEND: NONE (single line, no legend needed)
+
+FORMATTING:
+  
+  Title:
+    - Title Text: "Monthly Churn Rate Trend"
+    - Show Title: ON
+    - Title Font Size: 14pt
+  
+  Axis Titles:
+    - X-axis: "Month"
+    - Y-axis: "Churn Rate (%)"
+    - Show Axis Titles: ON
+  
+  Data Labels:
+    - Data Labels: ON
+    - Show on all data points: YES
+    - Font Size: 9pt
+    - Position: Top
+    - Values to display: [Monthly Churn Rate %]
+  
+  Line Properties:
+    - Line Width: 3pt
+    - Line Color: #4472C4 (blue)
+    - Markers: Circle (medium)
+    - Marker Color: #4472C4
+  
+  Y-Axis Scale:
+    - Min: 0
+    - Max: Auto (or set to 30% if prefer fixed upper bound)
+  
+  Gridlines:
+    - Y-axis Gridlines: ON (help read values)
+    - X-axis Gridlines: OFF
+
+ANALYTICS (Add Trend Line):
+  - Right-click chart > Add Analytics
+  - Add Trend Line: ON
+  - Direction: Ascending/Descending (auto-detect)
+  - Color: #70AD47 (green if trending down; red if up)
+  - Line Type: Dashed
+  - Transparency: 50%
+
+FILTERS TO APPLY:
+  - Report_Month: Select date range (e.g., last 12 months)
+    OR use Year/Quarter slicer on page
+  - Region: (Leave blank for global, OR filter if analyzing one region)
+
+EXPECTED DISPLAY:
+  ```
+  Monthly Churn Rate Trend
+  30% ┤                    
+      │           /‾‾\              /  
+  20% ┤      /‾‾‾    \            /   
+      │   /‾             \___    /     
+  10% ┤/                      \‾      
+      │                              
+   0% ┴──────────────────────────────
+      Jan Feb Mar Apr May Jun Jul Aug
+  ```
+  (Trend line superimposed)
+
+POSITIONING ON REPORT PAGE:
+  - Top-center or top-right, under header
+  - Occupy 2 columns × 2 rows (approx. 650px × 400px)
+  - Leave 20px margin on all sides
+
+DRILL-THROUGH / INTERACTIVITY:
+  - Enable drill-down: Right-click chart > Drill through
+  - Drill target page: "Customer Details" (to be created in Chunks 3+)
+  - Filter passed: Report_Month
+
+5.3 VISUAL 3: BAR CHART FOR REGIONAL CHURN (Q3)
+
+PURPOSE: Compare churn rate across regions; identify high-risk geographies
+
+Visual Type: Column Chart (vertical bar chart)
+
+FIELD CONFIGURATION:
+  - AXIS (X-axis): Drag [Region] from fact_customer_churn
+    - SORT: By [Churn Rate %] Descending (highest churn first)
+  
+  - VALUES (Y-axis): Drag [Regional Churn Rate %] measure
+  
+  - LEGEND: NONE (no legend; region on X-axis)
+
+FORMATTING:
+  
+  Title:
+    - Title Text: "Churn Rate by Region"
+    - Show Title: ON
+    - Font Size: 14pt
+  
+  Axis Titles:
+    - X-axis: "Region"
+    - Y-axis: "Churn Rate (%)"
+    - Show: ON
+  
+  Data Labels:
+    - Data Labels: ON
+    - Position: On top of bar
+    - Font Size: 10pt
+    - Format: Percentage, 1 decimal
+  
+  Bar Properties:
+    - Color: Conditional formatting (see 5.3.1 below)
+    - Bar Image: NONE (no fancy backgrounds)
+    - Outline: Light gray, 1pt
+    - Transparency: 0%
+  
+  Y-Axis:
+    - Min: 0
+    - Max: Auto or 30% (benchmark)
+    - Gridlines: ON
+
+CONDITIONAL FORMATTING (Color by Churn Rate):
+  - Right-click chart > Conditional Formatting > Color Scales
+  - Format by: [Regional Churn Rate %]
+  - Lowest Value: #92D050 (green) at 0% ← LOW RISK
+  - Middle Value: #FFC000 (yellow) at ~15% ← MEDIUM RISK
+  - Highest Value: #FF0000 (red) at 30%+ ← HIGH RISK
+  - Sensitivity: 1.0 (linear scale)
+
+FILTERS TO APPLY:
+  - Report_Month: Select current or recent month
+  - Region: NONE (show all regions for comparison)
+  - Customer_Segment: (Optional; leave blank for overall)
+
+EXPECTED DISPLAY:
+  ```
+  Churn Rate by Region
+  30% ┤ ┌─────┐             
+      │ │East │ 22.1%      
+  20% ┤ ├─────┬─────┐      
+      │ │South│ 18.3%
+  10% ┤ ├─────┼─────┬─────┐
+      │ │  ...│ ...┤West│ ...
+   0% ┴─┴─────┴─────┴─────┴───
+      East South West North
+  ```
+  (East bar RED—highest churn, North bar GREEN—lowest)
+
+POSITIONING ON REPORT PAGE:
+  - Bottom-left or bottom-center
+  - Occupy 2 columns × 2 rows (approx. 650px × 400px)
+  - Align below KPI card for visual flow
+
+DRILL-THROUGH / INTERACTIVITY:
+  - Enable drill-down: Right-click chart > Drill through
+  - Drill target page: "Regional Detail" (regional details dashboard, future chunk)
+  - Filter passed: Region
+
+5.4 SUMMARY TABLE (OPTIONAL, FOR REFERENCE)
+
+PURPOSE: Provide exact numbers behind charts for auditing and detailed review
+
+Visual Type: Table (matrix)
+
+FIELD CONFIGURATION:
+  - ROWS: Drag [Region]
+  - VALUES:
+    - [Total Customers]
+    - [Churned Customers]
+    - [Active Customers]
+    - [Churn Rate %]
+
+FORMATTING:
+  
+  Column Headers:
+    - Background: #D9E1F2 (light blue)
+    - Font: Bold, 11pt
+    - Alignment: Center
+  
+  Values:
+    - Number Format: Whole number, 0 decimals (for counts)
+    - Percentage Format: 1 decimal (for Churn Rate)
+    - Text Color: Black
+    - Row Height: Auto
+  
+  Alternating Rows:
+    - Background: Alternating white and #F2F2F2 (light gray)
+    - Improves readability
+
+EXPECTED DISPLAY:
+  ```
+  Region    Total_Customers  Churned  Active  Churn_Rate %
+  ──────────────────────────────────────────────────────────
+  East      1,200            265      935     22.1%
+  South     980              179      801     18.3%
+  West      850              119      731     14.0%
+  North     970              116      854     12.0%
+  ──────────────────────────────────────────────────────────
+  TOTAL     4,000            679      3,321   17.0%
+  ```
+
+POSITIONING ON REPORT PAGE:
+  - Bottom-right (below regional bar chart)
+  - Occupy 2 columns × 2 rows (approx. 500px × 400px)
+  - Enable scrolling if many regions
+
+FILTERS TO APPLY:
+  - Same as bar chart (Report_Month, etc.)
+
+================================================================================
+SECTION 6: REPORT PAGE LAYOUT & NAVIGATION (Q1–Q3)
+================================================================================
+
+6.1 PAGE NAME & PURPOSE
+
+Page Name: "Executive Dashboard" (or "Churn Overview")
+Purpose: High-level churn KPIs and trends for C-level stakeholders
+Intended Audience: CEO, CFO, VP Customer Success, Board Members
+
+6.2 PAGE LAYOUT DIAGRAM
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ HEADER: "Reduce Customer Churn - Executive Dashboard"               │
+│ Subtitle: "Last Updated: DD-MMM-YYYY" (dynamic date)               │
+└──────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ FILTERS (Top row, left-aligned)                                        │
+│ [Report_Month ▼] [Region ▼] [Customer_Segment ▼] [Reset All ◄]       │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────┐  ┌────────────────────────────────────────┐
+│ KPI CARD: Churn Rate %   │  │                                        │
+│    15.2%                 │  │   LINE CHART: Monthly Trend             │
+│                          │  │   (30% area, 2 cols)                   │
+│ (1 col, 1-2 rows)        │  │                                        │
+└──────────────────────────┘  │                                        │
+                               │                                        │
+                               │                                        │
+┌──────────────────────────┐  │                                        │
+│ Total Customers: 4,000   │  └────────────────────────────────────────┘
+│ Active: 3,321 (83.0%)    │
+│ Churned: 679 (17.0%)     │
+│ (1 col, 1 row, small KPI)│  ┌────────────────────────────────────────┐
+└──────────────────────────┘  │ BAR CHART: Churn by Region              │
+                               │ (30% area, 2 cols)                     │
+                               │                                        │
+                               │                                        │
+                               │                                        │
+                               └────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│ REFERENCE TABLE: Churn Metrics by Region (scrollable)                   │
+│ Region | Total | Churned | Active | Churn %                             │
+│ ...                                                                      │
+└──────────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│ FOOTER: "Data as of [Report_Month]. For details, click any chart or     │
+│ navigate to Regional/Customer dashboard."                                │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+6.3 SLICER CONFIGURATION
+
+Slicer 1: Report_Month
+  Field: dim_Calendar[YearMonth_Text]
+  Type: Dropdown list (not tile buttons, to save space)
+  Default Selection: Current month or last 12 months (date range)
+  Interaction: Filters ALL visuals on this page
+
+Slicer 2: Region
+  Field: fact_customer_churn[Region]
+  Type: Dropdown list
+  Default Selection: (All) - no filter initially
+  Interaction: Filters KPI, trend, and bar chart
+
+Slicer 3: Customer_Segment (if available in data)
+  Field: fact_customer_churn[Customer_Segment]
+  Type: Dropdown
+  Default Selection: (All)
+  Interaction: Filters all visuals (advanced filter)
+
+SLICER INTERACTIONS:
+  - By default, slicers filter all visuals on page
+  - Click slicer > Format > Interaction > Ensure all visuals set to "Filter"
+  - DO NOT set to "None" (defeats the purpose)
+
+6.4 VISUAL INTERACTIONS
+
+DRILL-THROUGH (Optional, Advanced):
+  - Right-click bar chart (Regional Churn) > Drill through
+  - Drill target: New page "Regional Detail" (to be built in Chunk 3+)
+  - Pass filter: Region
+
+CROSS-FILTERING:
+  - Clicking bar in regional chart highlights corresponding month(s) in trend chart
+  - Enabled automatically if charts share filters; can disable if too cluttered
+
+TOOLTIPS:
+  - Hover over data point (line chart, bar chart) shows tooltip
+  - Tooltip format: "Month: Jan 2025, Churn Rate: 15.2%"
+  - (Default Power BI behavior; no custom config needed for Q1-Q3)
+
+6.5 PAGE FORMATTING & STYLING
+
+Background:
+  - Color: White or very light gray (#F8F8F8)
+  - Transparency: 0%
+  - Borders: None
+
+Title/Header:
+  - Text: "Reduce Customer Churn - Executive Dashboard"
+  - Font: Segoe UI, 16pt, Bold, #1F4E78 (dark blue)
+  - Background: #D9E1F2 (light blue), aligned full width
+  - Padding: 20px top, 20px bottom
+
+Subtitle (Dynamic Date):
+  - Text Box with formula: "Last Updated: " & FORMAT(TODAY(), "DD-MMM-YYYY")
+  - Font: 10pt, Gray
+  - Below main title, left-aligned
+
+Grid/Spacing:
+  - Use 20px margins around all visuals
+  - Align visuals to 10px grid (ensures professional look)
+  - Group related visuals (KPI + supporting chart)
+
+Color Scheme:
+  - Primary: #4472C4 (Blue) - Churn metrics
+  - Success: #92D050 (Green) - Low churn/positive
+  - Warning: #FFC000 (Yellow) - Medium churn
+  - Alert: #FF0000 (Red) - High churn
+  - Neutral: #7F7F7F (Gray) - Backgrounds, text
+
+Font Standards:
+  - Headers/Titles: Segoe UI, 12–14pt, Bold
+  - Data Labels: Segoe UI, 9–10pt, Regular
+  - Axis Labels: Segoe UI, 10pt, Regular
+  - Tooltips: Segoe UI, 9pt, Regular
+
+================================================================================
+SECTION 7: TESTING & VALIDATION (Q1–Q3)
+================================================================================
+
+7.1 DATA VALIDATION CHECKLIST
+
+☐ DATA IMPORT: All 25,000+ rows loaded from fact_customer_churn.csv
+  Verify: Switch to Data view > Inspect row count (right panel shows "25,000 rows")
+
+☐ COLUMN DATA TYPES: All columns correct type (Text, Date, Decimal, etc.)
+  Verify: Model view > Each column icon matches expected type
+
+☐ RELATIONSHIPS: 3 relationships created and active (Calendar, Customer, Contract)
+  Verify: Model view > Visual lines connecting tables; no loops
+
+☐ NULL VALUES: No unexpected nulls
+  Verify: Data view > Scan for blanks; expected nulls:
+    - Churn_Date: Blank if Churn_Flag = 0 (customer active)
+    - Report_Month: Populated for all (derived or source)
+
+☐ CHURN FLAG CONSISTENCY: Verify Churn_Flag values are 0/1 or TRUE/FALSE only
+  Verify: Data view > Right-click Churn_Flag > Column Profile
+    Result: Only 0/1 values shown in bar chart
+
+7.2 MEASURE VALIDATION (Manual Calculation)
+
+Validate [Churn Rate %] measure against manual Excel calculation:
+
+METHOD:
+  1. Export sample fact table to Excel (Power BI > File > Export Data)
+  2. Create pivot: Rows = Region, Values = Churn_Flag (count)
+  3. Calculate: Churned / Total = Churn %
+  4. Compare to Power BI card/visual showing same region
+
+EXAMPLE VALIDATION:
+  Region  Total_Customers  Churned  Churn % (Excel)  Churn % (PBI)  Status
+  ───────────────────────────────────────────────────────────────────────────
+  East    1,200            265      22.08%           22.1%          ✓ Match
+  South   980              179      18.27%           18.3%          ✓ Match
+  West    850              119      14.00%           14.0%          ✓ Match
+  North   970              116      11.96%           12.0%          ✓ Match
+  TOTAL   4,000            679      16.98%           17.0%          ✓ Match
+
+PASS CRITERIA: ±0.5% variance acceptable (rounding differences)
+
+7.3 VISUAL VALIDATION CHECKLIST
+
+☐ KPI CARD
+  ☐ Displays current churn rate percentage (e.g., 15.2%)
+  ☐ Updates when Report_Month slicer changed
+  ☐ Updates when Region slicer changed
+  ☐ Font size is readable (35pt+)
+  ☐ Formatting matches spec (# decimal places, % symbol)
+
+☐ LINE CHART (Trend)
+  ☐ X-axis shows months in chronological order (Jan, Feb, Mar...not scrambled)
+  ☐ Y-axis starts at 0%, goes to max data point + 5%
+  ☐ Line connects all months (no gaps)
+  ☐ Data labels visible on each point
+  ☐ Trend line superimposed (if added)
+  ☐ Filters apply: Changing Report_Month slicer re-draws chart
+
+☐ BAR CHART (Regional)
+  ☐ Bars sorted by Churn % descending (highest on left)
+  ☐ Regional names visible on X-axis
+  ☐ Churn % values displayed on top of bars
+  ☐ Color gradient applied (red for high, green for low)
+  ☐ Filters apply: Changing Report_Month updates bar heights
+
+☐ SUMMARY TABLE
+  ☐ All regions displayed (East, South, West, North)
+  ☐ Columns: Total, Churned, Active, Churn %
+  ☐ TOTAL row shows aggregate (sum of regions)
+  ☐ Percentages sum correctly (Active + Churned = Total)
+  ☐ Numbers match visuals (KPI card, bar chart)
+
+7.4 FILTER & INTERACTION TESTING
+
+Test 1: Single Region Filter
+  Step: Set Region slicer to "East" only
+  Expected: 
+    - KPI Card shows East churn rate only (~22%)
+    - Trend chart shows only East monthly trend
+    - Bar chart shows only East bar (or all grayed out except East)
+    - Table shows only East row
+  Pass/Fail: ___
+
+Test 2: Month Range Filter
+  Step: Set Report_Month slicer to "2024-01" through "2024-12"
+  Expected:
+    - KPI card shows average/aggregate for 12-month period
+    - Trend chart shows 12-month line
+    - All monthly churn points between Jan–Dec visible
+  Pass/Fail: ___
+
+Test 3: Multiple Regions
+  Step: Set Region slicer to "East" AND "South" (multi-select)
+  Expected:
+    - KPI shows combined churn rate (East + South)
+    - Trend shows trend for only these two regions
+    - Bar chart shows two bars only (East, South)
+  Pass/Fail: ___
+
+Test 4: Reset Filters
+  Step: Click "Reset All" button or clear all slicers
+  Expected:
+    - All filters removed
+    - All visuals show full dataset
+    - KPI shows global churn rate (~17%)
+    - Trend shows all months
+    - Bar shows all regions
+  Pass/Fail: ___
+
+7.5 EDGE CASE & PERFORMANCE TESTING
+
+Test 5: Empty Filter (No Data)
+  Step: Set Region slicer to "North" AND Report_Month to "2025-01" (future date, no data)
+  Expected:
+    - KPI card shows blank or "No data"
+    - Charts show empty (no bars, no line)
+    - Table shows no rows
+  Pass/Fail: ___
+
+Test 6: Large Date Range
+  Step: Set Report_Month to 24-month range (e.g., 2023-01 to 2024-12)
+  Expected:
+    - Report loads within 2 seconds
+    - Trend line shows 24 months smoothly
+    - No lag or freezing
+  Pass/Fail: ___
+
+Test 7: Decimal Precision
+  Step: Inspect Churn Rate % measure with many decimal places
+  Expected:
+    - Measure = 16.98%, displays as 17.0% (1 decimal)
+    - No rounding errors (17.0% – 17.2% acceptable)
+    - Consistency across all visuals
+  Pass/Fail: ___
+
+7.6 ACCEPTANCE CRITERIA FOR Q1–Q3
+
+CRITERION 1: BASELINE CHURN RATE (Q1)
+✓ KPI Card displays current churn rate accurate to 0.5%
+✓ Measure matches manual Excel calculation
+✓ Filters (Region, Month) update KPI correctly
+✓ Format is percentage with 1 decimal place
+PASS WHEN: Card displays X.X% matching source data ±0.5%
+
+CRITERION 2: CHURN TREND (Q2)
+✓ Line chart shows 12+ months of monthly churn rates
+✓ X-axis in chronological order
+✓ Y-axis scaled 0% to max+5%
+✓ Trend line indicates direction (ascending/descending)
+✓ Data labels readable on each point
+PASS WHEN: Chart shows clear trend pattern (e.g., upward or seasonal)
+
+CRITERION 3: REGIONAL CHURN (Q3)
+✓ Bar chart shows all 4 regions (East, South, West, North)
+✓ Bars sorted by churn rate descending
+✓ Color gradient applied (green=low, red=high)
+✓ Regional churn rates match table values
+✓ Numbers on bars accurate to 0.1%
+PASS WHEN: Bar chart identifies highest-churn region and matches table
+
+================================================================================
+SECTION 8: EXPECTED INSIGHTS & BUSINESS OUTCOMES (Q1–Q3)
+================================================================================
+
+8.1 QUESTION 1: BASELINE CHURN RATE
+Expected Insight:
+  - Overall churn rate typically ranges 10–20% per month depending on industry
+  - High churn (>25%): Indicates product/service quality or onboarding issues
+  - Low churn (<5%): May indicate data quality or segment exclusion
+  - Healthy churn (15%): Suggests realistic attrition; focus on drivers
+
+Business Action:
+  1. Benchmark churn against industry standard (telecom ~30%, SaaS ~5–7%)
+  2. If >industry average: Escalate root cause analysis (Q7–Q10 will help)
+  3. If <industry average: Validate data quality; may be selection bias
+
+Expected Business Outcome:
+  - Stakeholders have baseline KPI to track year-over-year progress
+  - Retention targets set (e.g., "reduce churn to 12% by Q4")
+  - Monthly dashboards enable quick spotting of anomalies
+
+8.2 QUESTION 2: CHURN TREND
+Expected Insight:
+  - SEASONAL PATTERN: Churn may spike in Q4 (budget cuts, holiday disruptions)
+                      Or dip in Q2 (summer growth, renewals)
+  - GROWTH OR DECLINE: Upward trend = deteriorating retention; downward = improving
+  - INFLECTION POINTS: Detect when trend changes (e.g., new product launch
+                       correlates with churn drop)
+  - VOLATILITY: High month-to-month variance = unstable retention
+
+Business Action:
+  1. If trending upward: Urgent focus on churn drivers (Q7–Q14)
+     Example: "Churn rising 1% per month—need immediate intervention"
+  2. If seasonal: Time retention campaigns before peak churn month
+     Example: "Spike in Nov–Dec—launch loyalty program in Oct"
+  3. If stable/declining: Celebrate improvements; track what changed
+     Example: "Churn flat at 15%—hold strategy; no escalation needed"
+
+Expected Business Outcome:
+  - Proactive rather than reactive retention strategy
+  - Retention campaigns timed to churn patterns
+  - Clear before-after metrics for campaign effectiveness
+
+8.3 QUESTION 3: REGIONAL CHURN
+Expected Insight:
+  - GEOGRAPHIC VARIATION: Churn likely differs by region (±5–10 percentage points)
+  - HIGH-CHURN REGION: One region may have 2x churn rate of lowest region
+    Example: East 22% vs. North 12% (1.8x difference)
+  - ROOT CAUSES REGIONAL: Service availability, local competition, language support differences
+  - RESOURCE ALLOCATION: High-churn region needs targeted customer success effort
+
+Business Action:
+  1. Analyze high-churn region (drill into Q7–Q10 for that region)
+     Example: "East region churn 22%—are they new customers? Low usage?"
+  2. Allocate disproportionate CS resources to high-churn region
+     Example: "Add 2 CSMs to East region to improve onboarding"
+  3. Best-practice transfer: Learn from low-churn region
+     Example: "North has 12% churn—adopt their onboarding playbook in East"
+
+Expected Business Outcome:
+  - Regionalized retention strategies (not one-size-fits-all)
+  - Targeted staffing and budget allocation
+  - Measurable regional churn reduction within 3 months
+
+8.4 COMBINED INSIGHTS (Q1–Q3 Together)
+
+META-PATTERN:
+  If baseline is 17%, trend is upward (+1% per month), and East region is 22%:
+  
+  ROOT HYPOTHESIS: East region has systemic issue (service, product fit, or support)
+  driving above-average churn AND worsening trend.
+  
+  IMMEDIATE ACTION:
+  1. Root cause analysis in East region (Q7–Q14 drill-down)
+  2. Escalate support resources to East
+  3. Freeze non-critical changes; focus on stabilization
+  4. Track East region weekly until trend reverses
+  
+  EXPECTED OUTCOME:
+  Trend reverses within 4–6 weeks; East region churn drops to 18% by end of quarter.
+
+================================================================================
+SECTION 9: SUMMARY & SIGN-OFF (CHUNK 2)
+================================================================================
+
+DELIVERABLES COMPLETED:
+✓ Data import and transformation (Power Query steps detailed, M scripts provided)
+✓ Star schema data model design (Calendar, fact, relationships defined)
+✓ 7 DAX measures created (base measures + Q1–Q3 specific measures)
+✓ 3 visuals built (KPI card, trend line chart, regional bar chart)
+✓ Report page layout and navigation design
+✓ Testing checklist (validation tests, acceptance criteria)
+✓ Expected insights and business outcomes documented
+
+NEXT STEPS - TRANSITION TO CHUNK 3:
+Chunk 3 will implement Questions 4–6 (Customer Demographics & Service Attributes):
+  - Customer Age Group analysis (churn by 18–25, 26–35, 36–45, 45+)
+  - Contract Type impact (Monthly vs. Annual)
+  - Payment Method correlation
+
+New Visuals in Chunk 3:
+  - Column chart: Churn by Age Group
+  - Pie chart: Churn by Contract Type
+  - Stacked bar: Churn by Payment Method
+  - New page: "Customer Segments Dashboard"
+
+New Measures in Chunk 3:
+  - Churn Rate % by Age Group
+  - Churn Rate % by Contract Type
+  - Churn Rate % by Payment Method
+
+FILE LOCATIONS:
+  - This guide (Chunk 2): Power_BI_Implementation_Guide_CHUNK_2.txt
+  - Power BI workbook: Churn_Analysis.pbix (saved after completing Chunk 2)
+  - Dataset: /dataset/fact_customer_churn.csv, dim_customer.csv, etc.
+
+================================================================================
+END OF CHUNK 2 - CORE INFRASTRUCTURE & DATA MODELING
+================================================================================

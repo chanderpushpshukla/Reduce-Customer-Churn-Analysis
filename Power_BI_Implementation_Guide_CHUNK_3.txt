@@ -1,0 +1,1027 @@
+================================================================================
+POWER BI CHURN ANALYSIS: COMPREHENSIVE IMPLEMENTATION GUIDE
+CHUNK 3 - CUSTOMER SEGMENTATION & DEMOGRAPHICS (QUESTIONS 4–6)
+================================================================================
+
+DOCUMENT VERSION: 1.0
+DATE: February 2026
+SCOPE: Questions 4–6 (Age Group Churn, Contract Type, Payment Method)
+COMPLEXITY: Intermediate—extends Chunk 2 with demographic and service attributes
+
+================================================================================
+EXECUTIVE SUMMARY - CHUNK 3
+================================================================================
+
+This chunk extends the data model and visuals from Chunk 2 to answer demographic
+and service-level churn drivers:
+- Question 4: How does churn vary by customer age group? (demographic segmentation)
+- Question 5: How does contract type affect churn rates? (service packaging impact)
+- Question 6: Does payment method correlate with churn? (billing friction analysis)
+
+These questions enable:
+- Targeted retention campaigns by customer profile
+- Service optimization (contract term sizing)
+- Billing process improvements
+
+DELIVERABLES:
+1. New dimension tables (Age Group, Contract Type, Payment Method) in data model
+2. Five segment-level DAX measures
+3. Three visuals (column chart, pie chart, stacked bar)
+4. New report page: "Customer Segments Dashboard"
+5. Drill-down and cross-filter interactions
+6. Segment-based retention playbook recommendations
+
+ESTIMATED EFFORT: Medium (5–7 hours including new visuals and interactions)
+
+================================================================================
+SECTION 1: DATA REQUIREMENTS & PREPROCESSING (Q4–Q6)
+================================================================================
+
+1.1 DATA SOURCES & COLUMNS
+
+For Q4 (Age Group):
+  Source: fact_customer_churn or dim_customer
+  Columns Required:
+    - Age_Group (text): Categorical (18–25, 26–35, 36–45, 45+)
+      OR Age (numeric): Can calculate buckets in Power Query
+    - Churn_Flag
+    - Customer_ID
+    - Report_Month
+  
+  Data Quality Check:
+    - Age_Group: No nulls; only expected buckets
+    - Age: Numeric, 18–100 range, no negatives
+
+For Q5 (Contract Type):
+  Source: fact_customer_churn or dim_contract
+  Columns Required:
+    - Contract_Type (text): Monthly, Quarterly, Annual
+    - Churn_Flag
+    - Customer_ID
+    - Monthly_Charges (optional, to correlate price + contract)
+  
+  Data Quality Check:
+    - Contract_Type: Only M/Q/A values; consistent case
+    - No nulls expected
+
+For Q6 (Payment Method):
+  Source: fact_customer_churn or dim_payment
+  Columns Required:
+    - Payment_Method (text): Credit Card, Debit Card, UPI, Cash
+    - Churn_Flag
+    - Customer_ID
+    - Auto_Renewal (optional): Yes/No flag for automatic payments
+    - Payment_Failed_Count (optional): Number of failed payment attempts
+  
+  Data Quality Check:
+    - Payment_Method: Consistent capitalization; no mixed case
+    - Auto_Renewal: Yes/No, no nulls
+
+1.2 POWER QUERY PREPROCESSING (IF NOT ALREADY DONE IN CHUNK 2)
+
+STEP 1: BUCKETING AGE (IF IMPORTED AS NUMERIC)
+
+If Age_Group does not exist but Age column does:
+
+In Power Query Editor:
+  1. Right-click Age column > Add Column > Conditional Column
+  2. Name: "Age_Group"
+  3. Formula (UI):
+     If Age < 26 then "18–25"
+     else if Age < 36 then "26–35"
+     else if Age < 46 then "36–45"
+     else "45+"
+  4. Click OK
+
+M CODE (Alternative):
+  #"Added Age Bucketing" = Table.AddColumn(#"Previous Step", "Age_Group",
+    each if [Age] < 26 then "18–25"
+         else if [Age] < 36 then "26–35"
+         else if [Age] < 46 then "36–45"
+         else "45+"
+  , type text)
+
+STEP 2: STANDARDIZE CATEGORICAL VALUES
+
+Standardize Contract_Type (if mixed case or spaces):
+  1. Select Contract_Type column
+  2. Transform > Format > Trim (remove spaces)
+  3. Transform > Format > Lowercase (if needed)
+  4. Replace Values:
+     Find: "monthly" → Replace: "Monthly"
+     Find: "quarterly" → Replace: "Quarterly"
+     Find: "annual" → Replace: "Annual"
+
+M CODE:
+  #"Standardized Contract" = Table.TransformColumns(Source,{
+    {"Contract_Type", Text.Trim},
+    {"Contract_Type", Text.ProperCase}
+  })
+
+Standardize Payment_Method:
+  1. Select Payment_Method
+  2. Apply same trim + proper case steps
+  3. Verify unique values: Home > Data Profile (column quality)
+
+1.3 LOAD DIMENSION TABLES (IF SEPARATE)
+
+If dim_contract.csv and dim_payment.csv exist as separate files:
+
+Load dim_contract.csv:
+  - Home > Get Data > CSV > Select dim_contract.csv
+  - Columns: Contract_Type
+  - Data Type: Text
+
+Load dim_payment.csv:
+  - Home > Get Data > CSV > Select dim_payment.csv
+  - Columns: Payment_Method
+  - Data Type: Text
+
+Merge with Fact Table (if needed):
+  - Merge Queries (Home > Merge Queries)
+  - FROM: fact_customer_churn
+  - TO: dim_contract
+  - ON: Contract_Type = Contract_Type
+  - Expand: Include all columns from dim_contract for attributes
+
+================================================================================
+SECTION 2: DATA MODEL UPDATES (DIMENSION TABLES)
+================================================================================
+
+2.1 ADD DIMENSION TABLES TO STAR SCHEMA
+
+Previous (from Chunk 2):
+  dim_Calendar → fact_customer_churn ← dim_Customer
+  
+Updated (Chunk 3):
+  
+  dim_Calendar→ 
+  dim_Customer →
+  dim_Contract → fact_customer_churn
+  dim_Payment →
+
+With New Relationships:
+  - dim_Contract[Contract_Type] → fact_customer_churn[Contract_Type]
+    (One-to-Many, Single filter direction)
+  - dim_Payment[Payment_Method] → fact_customer_churn[Payment_Method]
+    (One-to-Many, Single filter direction)
+
+2.2 CREATE DIMENSION TABLES FOR CONTRACT & PAYMENT (IF NOT SEPARATE FILES)
+
+If contract and payment data are embedded in fact table, create lightweight
+reference dimensions for cleaner model:
+
+OPTION A: Create dim_Contract in Power BI
+
+  1. Modeling > New Table
+  2. Copy/paste:
+  
+    dim_Contract = DISTINCT(fact_customer_churn[Contract_Type])
+  
+  3. Convert to table by renaming: Right-click > Rename as "dim_Contract"
+  4. Add description: "Contract types: Monthly, Quarterly, Annual"
+
+OPTION B: Create via Power Query (if importing separate CSV)
+
+  1. Load dim_contract.csv (Home > Get Data > CSV)
+  2. Ensure columns: Contract_Type (text), Contract_Description (optional)
+  3. Close & Apply
+
+Repeat for Payment Method:
+
+OPTION A (DAX):
+  
+  dim_Payment = DISTINCT(fact_customer_churn[Payment_Method])
+
+OPTION B (CSV):
+  
+  Load dim_payment.csv with columns: Payment_Method, Payment_Category (optional)
+
+2.3 ESTABLISH RELATIONSHIPS
+
+In Model view (left panel > Model icon):
+
+Relationship 1: dim_Contract to fact_customer_churn
+  - FROM: dim_Contract[Contract_Type]
+  - TO: fact_customer_churn[Contract_Type]
+  - Cardinality: One-to-Many
+  - Filter Direction: Single
+  - Active: YES
+
+Relationship 2: dim_Payment to fact_customer_churn
+  - FROM: dim_Payment[Payment_Method]
+  - TO: fact_customer_churn[Payment_Method]
+  - Cardinality: One-to-Many
+  - Filter Direction: Single
+  - Active: YES
+
+MANUAL SETUP (if auto-detection fails):
+  1. Modeling > Manage Relationships
+  2. Click New
+  3. Configure as above
+  4. Click OK
+
+VERIFICATION:
+  - Model view shows 5 dimension tables (Calendar, Customer, Contract, Payment)
+  - No circular loops (should form star: fact at center)
+  - All relationships marked active (default)
+
+================================================================================
+SECTION 3: DAX MEASURES FOR QUESTIONS 4–6
+================================================================================
+
+3.1 SEGMENT-LEVEL CHURN RATE MEASURES
+
+These measures calculate churn rate within each segment (Age, Contract, Payment).
+They reuse base measures from Chunk 2.
+
+MEASURE 1: Churn Rate % by Age Group (Q4)
+Purpose: Calculate churn rate within each Age_Group context
+Audience: Marketing, Product (targeting by demographics)
+
+DAX CODE:
+  Churn Rate % (by Age Group) = [Churn Rate %]
+  
+  // Comment: The [Churn Rate %] measure from Chunk 2 automatically filters by
+  // Age_Group context when Age_Group is in the visual. No new measure needed.)
+
+OR (Explicit Measure if preferred):
+
+  Churn Rate by Age = 
+    VAR AgeGroupTotal = DISTINCTCOUNT('fact_customer_churn'[Customer_ID])
+    VAR AgeGroupChurned = CALCULATE(
+      DISTINCTCOUNT('fact_customer_churn'[Customer_ID]),
+      'fact_customer_churn'[Churn_Flag] = TRUE()
+    )
+    RETURN
+      IF(AgeGroupTotal = 0, BLANK(), DIVIDE(AgeGroupChurned, AgeGroupTotal) * 100)
+
+Comment: Same logic as global [Churn Rate %], just with Age_Group filter context
+
+MEASURE 2: Churn Rate % by Contract Type (Q5)
+Purpose: Calculate churn rate for each contract type
+Audience: Sales, Pricing (optimize contract offerings)
+
+DAX CODE:
+  Churn Rate by Contract = [Churn Rate %]
+  
+  // Comment: Again, [Churn Rate %] auto-filters by Contract_Type when on visual.
+
+OR (Explicit):
+
+  Churn Rate by Contract = 
+    VAR ContractTotal = DISTINCTCOUNT('fact_customer_churn'[Customer_ID])
+    VAR ContractChurned = CALCULATE(
+      DISTINCTCOUNT('fact_customer_churn'[Customer_ID]),
+      'fact_customer_churn'[Churn_Flag] = TRUE()
+    )
+    RETURN
+      IF(ContractTotal = 0, BLANK(), DIVIDE(ContractChurned, ContractTotal) * 100)
+
+MEASURE 3: Churn Rate % by Payment Method (Q6)
+Purpose: Calculate churn rate for each payment method
+Audience: Finance, Billing Ops (improve recurring payments)
+
+DAX CODE:
+  Churn Rate by Payment = [Churn Rate %]
+  
+  // Comment: [Churn Rate %] automatically adjusts to Payment_Method context.
+
+3.2 SEGMENT COMPOSITION MEASURES (Optional but Useful)
+
+MEASURE 4: Customer Count by Segment
+Purpose: Understand size of each segment (for context)
+Audience: All (show segment size in tooltips)
+
+DAX CODE:
+  Customer Count = DISTINCTCOUNT('fact_customer_churn'[Customer_ID])
+
+Use Case:
+  - Add to tooltips in charts (e.g., "Age 26–35: 1,200 customers, 15% churn")
+  - Identify small segments (small n → less reliable churn rate)
+
+MEASURE 5: Revenue at Risk by Segment (Q12-preview)
+Purpose: Calculate total revenue from churned customers (segment-level)
+Audience: Finance, CFO (revenue impact of each segment's churn)
+
+DAX CODE:
+  Revenue at Risk = 
+    CALCULATE(
+      SUM('fact_customer_churn'[Total_Revenue]),
+      'fact_customer_churn'[Churn_Flag] = TRUE()
+    )
+
+Comment: Requires Total_Revenue column in fact table
+Use Case:
+  - Show in reference table (Age Group, Churn Revenue)
+  - Identifies high-impact segments (e.g., Contract=Annual, high revenue loss)
+
+Format: Currency ($)
+
+================================================================================
+SECTION 4: VISUALS FOR QUESTIONS 4–6
+================================================================================
+
+4.1 VISUAL 1: COLUMN CHART FOR AGE GROUP CHURN (Q4)
+
+PURPOSE: Compare churn rate across age demographics; identify high-risk age groups
+
+Visual Type: Column Chart (vertical bars)
+
+FIELD CONFIGURATION:
+  - AXIS (X-axis): Drag [Age_Group] from fact_customer_churn
+    Sort: Custom Order (if possible) or alphabetically
+    Expected Order: 18–25, 26–35, 36–45, 45+
+  
+  - VALUES (Y-axis): Drag [Churn Rate %] measure
+  
+  - LEGEND: NONE (no legend needed; age on X-axis)
+
+FORMATTING:
+
+  Title:
+    - Title Text: "Churn Rate by Age Group"
+    - Font Size: 14pt, Bold
+    - Show Title: ON
+
+  Axis Titles:
+    - X-axis: "Age Group"
+    - Y-axis: "Churn Rate (%)"
+    - Show: ON
+
+  Data Labels:
+    - Data Labels: ON
+    - Position: On top of bar
+    - Format: Percentage, 1 decimal (e.g., 18.5%)
+    - Font Size: 10pt
+
+  Column Properties:
+    - Color: Static blue (#4472C4) OR conditional by churn rate (see note)
+    - Outline: Gray, 1pt
+    - Transparency: 0%
+  
+  Optional Conditional Color:
+    - If Age_Group = "18–25" (high risk): Red (#FF0000)
+    - If Age_Group = "26–35": Orange (#FFC000)
+    - If Age_Group = "36–45": Yellow (#92D050)
+    - If Age_Group = "45+": Green (#70AD47)
+
+  Y-Axis:
+    - Min: 0
+    - Max: Auto or 30%
+    - Gridlines: ON
+
+EXPECTED DISPLAY:
+  ```
+  Churn Rate by Age Group
+  30% ┤ ┌─────┐           
+      │ │18–25│ 28.3%     
+  20% ┤ ├─────┬─────┐     
+      │ │ 26–35│ 16.2%
+  10% ┤ ├──────┼─────┬─────┐
+      │ │  ...│ ...─┤36–45│ ...
+   0% ┴─┴──────┴─────┴─────┴───
+      18–25 26–35 36–45 45+
+  ```
+  (Younger age groups = higher churn bars)
+
+POSITIONING ON REPORT PAGE:
+  - Top-left corner of new "Customer Segments Dashboard" page
+  - Occupy 2 columns × 2 rows (~600px × 400px)
+
+INTERACT WITH FILTERS:
+  - Slicer: Report_Month filters chart
+  - Slicer: Region filters chart (optional drill-down)
+  - Clicking column: Can drill through to segment detail (if enabled)
+
+4.2 VISUAL 2: PIE CHART FOR CONTRACT TYPE CHURN (Q5)
+
+PURPOSE: Show distribution of churn across contract types; indicate whether
+shorter contracts (Monthly) drive more churn than longer (Annual)
+
+Visual Type: Pie Chart OR Donut Chart (donut is more modern)
+
+FIELD CONFIGURATION:
+  - LEGEND: Contract_Type (e.g., Monthly, Quarterly, Annual)
+  - VALUES: [Churn Rate %] OR [Churned Customers] (see note below)
+  
+  NOTE: Pie charts typically show VOLUME (# of churned) rather than rate (%).
+  Two options:
+    OPTION A: Drag [Churned Customers] to VALUES
+      → Pie shows total churned volume by contract type
+      → Larger slice = more churned customers
+      Example: Monthly contracts = 60% of all churn (large slice)
+    
+    OPTION B: Drag [Churn Rate %] to VALUES
+      → Pie shows average churn % (less intuitive for pie)
+      → May be misleading if segment sizes differ
+    
+  RECOMMENDATION: Use OPTION A (Churned Customers) for clearer interpretation
+
+FORMATTING:
+
+  Title:
+    - Title Text: "Churn Distribution by Contract Type"
+    - Font Size: 14pt, Bold
+
+  Legend:
+    - Position: Right side
+    - Layout: Vertical
+    - Show legend: ON
+
+  Data Labels:
+    - Show: ON
+    - Show both values and percentages: YES
+      Example slice label: "Monthly: 450 (66%)"
+    - Font Size: 10pt
+
+  Color (Fill):
+    - Monthly: #FF6B6B (red - high risk)
+    - Quarterly: #FFC000 (yellow - medium)
+    - Annual: #70AD47 (green - low risk)
+
+  Slices:
+    - Explode (separate): Top 1 slice slightly (if desired)
+    - Transparency: 0%
+
+EXPECTED DISPLAY:
+  ```
+        ╔═══════════════════╗
+        ║  Monthly: 450 (66%)║
+        ║  Quarterly: 150(22%) Quarterly
+        ║  Annual: 79 (12%)  ║   Annual
+        ║                   │ ╱╲
+        ║ Legend ────────────┘  │Monthly
+        ╚═══════════════════╝
+  
+        Pie: Large red slice (Monthly), small green & yellow
+  ```
+
+POSITIONING ON REPORT PAGE:
+  - Top-right corner, next to column chart (Q4)
+  - Occupy 2 columns × 2 rows (~600px × 400px)
+
+INTERPRET:
+  - If Monthly = 70% of churn: Monthly contracts = high abandonment driver
+  - If Annual = <10% of churn: Annual contracts = sticky (lower churn risk)
+  - ACTION: Consider incentivizing longer contract terms
+
+4.3 VISUAL 3: STACKED BAR CHART FOR PAYMENT METHOD (Q6)
+
+PURPOSE: Show churn rate by payment method; visualize correlation between
+payment friction and churn
+
+Visual Type: Stacked Column Chart (bar chart with segments)
+
+FIELD CONFIGURATION:
+  - AXIS (X-axis): [Payment_Method] (Credit Card, Debit, UPI, Cash)
+    Sort: By [Churn Rate %] descending
+  
+  - VALUES (Y-axis): 
+    Option A (Recommended): 
+      Stack [Churned Customers] (absolute volume of churn)
+      Add secondary value: [Active Customers] (show this as different color)
+    
+    Option B (Alternative):
+      Stacked [Churn Rate %] (stacked percentages)
+      Less clear than absolute; avoid unless comparing many payment types
+  
+  - LEGEND: Show segments (Churned, Active) or payment methods
+  
+  CONFIGURATION IN POWER BI:
+  1. Create visual > Stacked Column Chart
+  2. AXIS: Drag [Payment_Method]
+  3. VALUE:
+     - First Value: [Churned Customers] (drag here)
+     - Add [Active Customers] for context
+  4. LEGEND: Uses value names (Churned, Active)
+
+FORMATTING:
+
+  Title:
+    - "Churn Distribution by Payment Method"
+    - Font Size: 14pt
+
+  Axis Titles:
+    - X-axis: "Payment Method"
+    - Y-axis: "Customer Count"
+    - Show: ON
+
+  Data Labels:
+    - Show labels: ON for top value only (total)
+    - Position: On top of bar
+    - Format: Whole number, no decimals
+
+  Bar Colors:
+    - Churned Customers: Red (#FF0000)
+    - Active Customers: Green (#92D050)
+    - Outline: Dark gray, 1pt
+
+  Y-Axis:
+    - Min: 0
+    - Max: Auto
+    - Gridlines: ON
+
+EXPECTED DISPLAY:
+  ```
+  Churn by Payment Method
+  1,200┤
+       │          ┌──────┐
+   900 │ ┌──────┐ │Active│
+       │ │Churned
+   600 │ │┌─────┐│
+       │ ││Churn││
+   300 │ │└─────┘│                  
+       │ └──────┘│
+       └─────────────────────
+     Credit Debit UPI Cash
+     Card   Card
+  
+  Legend: Churned (red) | Active (green)
+  ```
+
+  INTERPRETATION:
+  - If Cash = large red segment: Cash users = high churn
+  - If Credit Card = small red segment: Credit card = low churn
+  - ACTION: Incentivize credit card adoption (e.g., 5% discount)
+
+POSITIONING ON REPORT PAGE:
+  - Bottom-left or bottom-right, below age + contract charts
+  - Occupy 2 columns × 2 rows (~600px × 400px)
+
+4.4 SUMMARY TABLE (REFERENCE, ALL SEGMENTS)
+
+PURPOSE: Provide detailed churn metrics by segment for drill-down and auditing
+
+Visual Type: Matrix Table
+
+FIELD CONFIGURATION:
+  
+  ROW HEADERS:
+    - Row 1: Age Group (18–25, 26–35, 36–45, 45+)
+    - Row 2: Contract Type (Monthly, Quarterly, Annual) [NESTED if using matrix]
+    - Row 3: Payment Method (Credit Card, Debit, UPI, Cash) [NESTED]
+  
+  VALUES (COLUMNS):
+    1. Total Customers [DISTINCTCOUNT]
+    2. Churned Customers [COUNT WHERE Churn=TRUE]
+    3. Active Customers [COUNT WHERE Churn=FALSE]
+    4. Churn % [FORMULA]
+    5. Revenue at Risk (if Total_Revenue column exists) [SUM]
+
+TABLE EXAMPLE:
+  ```
+  Age Group | Contract | Payment   | Total | Churned | Active | Churn %
+  ─────────────────────────────────────────────────────────────────────────
+  18–25     | Monthly  | Credit    |   120 |      28 |    92  |  23.3%
+  18–25     | Monthly  | Debit     |    85 |      21 |    64  |  24.7%
+  18–25     | Monthly  | Cash      |    75 |      18 |    57  |  24.0%
+  18–25     | Quarterly| Credit    |    50 |       7 |    43  |  14.0%
+  ...
+  [deeper rows for all combinations]
+  ─────────────────────────────────────────────────────────────────────────
+  TOTAL     |          |           | 4,000 |     679 | 3,321  |  17.0%
+  ```
+
+FORMATTING:
+  
+  Header Row:
+    - Background: #D9E1F2 (light blue)
+    - Font: Bold, 11pt, Black
+    - Border: 1pt gray
+
+  Data Rows:
+    - Alternating white and #F5F5F5 (light gray)
+    - Borders: Top/bottom 0.5pt gray
+    - Font: 10pt, Black
+
+  Total Row (bottom):
+    - Background: #CCE5FF (darker blue)
+    - Font: Bold, 11pt
+    - Borders: Top 2pt, bottom 2pt
+
+  Column Formatting:
+    - Whole Number counts: No decimals, thousands separator
+    - Percentages: 1 decimal, % symbol
+    - Currency: $ symbol, 0 decimals (if revenue column)
+
+POSITIONING:
+  - Full width, below all charts
+  - Occupy 4–6 columns × scrollable rows
+  - Allow horizontal scrolling if many combinations
+
+================================================================================
+SECTION 5: REPORT PAGE DESIGN - CUSTOMER SEGMENTS DASHBOARD
+================================================================================
+
+5.1 PAGE NAME & PURPOSE
+
+Page Name: "Customer Segments"
+Alternative Names: "Demographic Analysis", "Segment Churn"
+Purpose: Deep dive into demographic and service-level churn drivers
+Intended Audience: Product Managers, Marketing, Sales Leadership
+
+5.2 PAGE LAYOUT DIAGRAM
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ PAGE TITLE: "Customer Segments & Service Churn Analysis"            │
+│ Subtitle: "Identify churn drivers by age, contract, and payment"    │
+└──────────────────────────────────────────────────────────────────────┘
+
+FILTER ROW (Top):
+┌──────────────────────────────────────────────────────────────────────┐
+│ [Report_Month ▼] [Region ▼] [Customer_Segment ▼] [Reset All ◄]    │
+└──────────────────────────────────────────────────────────────────────┘
+
+INSIGHT BOXES (Optional, Top Row):
+┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────────┐
+│ Highest Risk Segment │  │ Lowest Risk Segment  │  │ Largest Churn    │
+│ 18–25, Monthly, Cash │  │ 45+, Annual, CC      │  │ Volume Segment   │
+│        28.3%         │  │         8.2%         │  │ Weekly: 18–25    │
+└──────────────────────┘  └──────────────────────┘  └──────────────────┘
+
+MAIN CHARTS (3x2 grid):
+┌─────────────────────────────────┐  ┌──────────────────────────────┐
+│ COLUMN CHART: Age Group         │  │ PIE CHART: Contract Type     │
+│ (Churn % by 18–25, 26–35, etc)  │  │ (Distribution of churn)      │
+│                                 │  │                              │
+│ [Chart shows bars, tallest left]│  │ [Pie slices with %]          │
+│                                 │  │                              │
+│                                 │  │                              │
+└─────────────────────────────────┘  └──────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│ STACKED BAR CHART: Payment Method                                   │
+│ (Churn volume & active customers by payment type)                   │
+│ [Bars: Credit, Debit, UPI, Cash with red/green stacks]            │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+
+SUMMARY TABLE (Full width, scrollable):
+┌─────────────────────────────────────────────────────────────────────┐
+│ Segment Metrics - Detailed Churn Analysis                           │
+│ Age | Contract | Payment | Total | Churned | Active | Churn % | Rev@Risk
+│ [rows for all segment combinations]                                 │
+│ [horizontal scrolling if needed]                                    │
+└─────────────────────────────────────────────────────────────────────┘
+
+FOOTER:
+┌─────────────────────────────────────────────────────────────────────┐
+│ Next: Drill into Behavioral Analysis (Tenure, Usage, Support)      │
+│ for root causes. Click chart to see customer details.              │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+5.3 SLICER CONFIGURATION
+
+Slicer 1: Report_Month
+  - Field: dim_Calendar[YearMonth_Text]
+  - Type: Dropdown
+  - Default: Current month or YTD
+  - Interaction: Filters all charts and table
+
+Slicer 2: Region
+  - Field: fact_customer_churn[Region]
+  - Type: Dropdown multi-select
+  - Default: (All)
+  - Interaction: Filters all visuals (optional; can remove if not needed)
+
+Slicer 3: Customer_Segment (if available)
+  - Field: fact_customer_churn[Customer_Segment]
+  - Type: Dropdown
+  - Default: (All)
+  - Interaction: Filters all visuals
+
+5.4 PAGE FORMATTING
+
+Background:
+  - Color: White or #FAFAFA (very light gray)
+  - Transparency: 0%
+
+Title:
+  - Text: "Customer Segments & Service Churn Analysis"
+  - Font: Segoe UI, 16pt, Bold, #1F4E78 (dark blue)
+  - Background: #D9E1F2 (light blue), full-width banner
+  - Padding: 15px top, 15px bottom
+
+Color Scheme:
+  - Primary charts: Blue (#4472C4)
+  - Age Group: Blue
+  - Contract type: Blue (or custom color per type)
+  - Payment method: Blue with stacks (red/green)
+  - Conditional colors: Green (low risk) → Yellow (medium) → Red (high risk)
+
+Font Standards:
+  - Headers: Segoe UI, 12–14pt, Bold
+  - Data labels: Segoe UI, 9–10pt, Regular
+  - Axis labels: Segoe UI, 10pt, Regular
+
+Spacing:
+  - 20px margin top/bottom
+  - 20px gutter between visuals
+  - Align to 10px grid
+
+================================================================================
+SECTION 6: INTERACTIONS & DRILL-THROUGH BEHAVIOR
+================================================================================
+
+6.1 VISUAL INTERACTIONS
+
+CROSS-FILTERING (within page):
+  By default, slicers filter all visuals. Additionally:
+  
+  Age Group Chart → Pie Chart:
+    - Clicking age group (e.g., 18–25) should NOT filter pie
+    - Disable: Right-click chart > Edit interactions > Set to None
+    - Reason: Age and Contract are independent dimensions; filtering confuses
+
+  Payment Method Chart → Age Chart:
+    - Same: Set to None (independent)
+
+  Summary Table:
+    - All slicers apply to table (expected behavior)
+    - No cross-filter from charts to table (set to None if unwanted)
+
+ENABLING DRILL-THROUGH (Optional):
+  
+  Drill-Through: Age Group Chart → "Behavioral Analysis" Page (Chunk 4)
+    1. Right-click Age Group column chart > Drill through
+    2. Set target page: "Behavioral Analysis" (to be created in Chunk 4)
+    3. Pass context: Age_Group filter
+    4. Click through Age_Group bar → drills to behavioral metrics for that age
+
+  This enables: "We see 18–25 has 28% churn—why? Dive into their usage and support."
+
+================================================================================
+SECTION 7: TESTING & VALIDATION (Q4–Q6)
+================================================================================
+
+7.1 DATA VALIDATION CHECKLIST
+
+☐ Age_Group exists and has correct buckets (18–25, 26–35, 36–45, 45+)
+  Verify: Home > Data Profile > Age_Group column quality (shows distinct values)
+
+☐ Contract_Type is standardized (Monthly, Quarterly, Annual; single case)
+  Verify: Model view > Right-click Contract_Type > View Data (no "MONTHLY" vs "monthly")
+
+☐ Payment_Method is standardized (Credit Card, Debit Card, UPI, Cash)
+  Verify: Data view > Scan Payment_Method column (consistent format)
+
+☐ No nulls in categorical columns
+  Verify: Data Profile > Right-click column > null%
+  Expected: 0% nulls (or <1% acceptable)
+
+7.2 MEASURE VALIDATION (Sample Calculations)
+
+Validate [Churn Rate %] by Age Group against manual pivot:
+
+METHOD:
+  1. Export fact_customer_churn to Excel
+  2. Create pivot: Rows = Age_Group, Values = Churn_Flag (COUNT distinct)
+  3. Calculate churn % per age group manually
+  4. Compare to Power BI chart values
+
+EXAMPLE VALIDATION:
+  Age Group  | Total_Cust | Churned | Excel % | PBI % | Status
+  ───────────────────────────────────────────────────────────
+  18–25      |      800   |   224   |  28.0%  | 28.1% | ✓ Match
+  26–35      |    1,200   |   194   |  16.2%  | 16.2% | ✓ Match
+  36–45      |      900   |   129   |  14.3%  | 14.3% | ✓ Match
+  45+        |    1,100   |    132  |  12.0%  | 12.0% | ✓ Match
+  TOTAL      |    4,000   |   679   |  17.0%  | 17.0% | ✓ Match
+
+PASS CRITERIA: ±0.2% variance acceptable (rounding)
+
+Repeat for Contract Type and Payment Method with same methodology.
+
+7.3 VISUAL VALIDATION CHECKLIST
+
+☐ COLUMN CHART (Age Group)
+  ☐ X-axis shows all 4 age groups (18–25, 26–35, 36–45, 45+) in expected order
+  ☐ Bars represent churn % (not absolute count)
+  ☐ Tallest bar on left (18–25) = highest churn ~28%
+  ☐ Data labels visible and accurate to 1 decimal
+  ☐ Slicer filtering works: Filtering Report_Month updates bar heights
+
+☐ PIE CHART (Contract Type)
+  ☐ Slices show: Monthly (large red ~66%), Quarterly (medium yellow ~22%), Annual (small green ~12%)
+  ☐ Percentages sum to 100%
+  ☐ Legend shows all three contract types
+  ☐ Hovering reveals count: "Monthly: 450 churned customers"
+
+☐ STACKED BAR (Payment Method)
+  ☐ X-axis shows all payment methods in order (Credit Card, Debit, UPI, Cash)
+  ☐ Bars show stacked colors: Red (churned) on bottom, Green (active) on top
+  ☐ Tallest bar = payment method with most churn volume
+  ☐ Data labels show total (churned + active) on top of bar
+
+☐ SUMMARY TABLE
+  ☐ Rows expand to show all segment combinations (Age × Contract × Payment)
+  ☐ Columns calculate correctly: Total, Churned, Active sum correctly per row
+  ☐ Churn % = Churned / Total (e.g., 120 / 500 = 24.0%)
+  ☐ TOTAL row (bottom) sums all rows, shows global 17% churn
+  ☐ Scrollable (horizontal) if table wide
+
+7.4 FILTER & INTERACTION TESTING
+
+Test 1: Single Age Group Filter
+  Step: (Add age group button if available, or manual filter)
+        For now, use slicer approach: Region slicer set to "East"
+  Expected:
+    - Charts update; showing East only
+    - Age group bar shows East age distribution
+    - Pie shows contract type for East
+    - Stacked bar shows payment method for East
+  Pass/Fail: ___
+
+Test 2: Multi-Segment Filter
+  Step: Set Report_Month = "2024-01", Region = "East", Contract = "Monthly"
+  Expected:
+    - All charts filter to intersection (East, Monthly, Jan 2024)
+    - KPI shows churn rate for Monthly contract in East in Jan
+    - Pie chart irrelevant (only one contract type filtered); may show blank
+    - Stacked bar shows payment method within this context
+  Pass/Fail: ___
+
+Test 3: Visual Interaction (Cross-filter)
+  Step: Click "18–25" age group bar
+  Expected (if drill-through enabled):
+    - Drill to "Behavioral Analysis" page, filtered to 18–25 cohort
+    - Show usage, support, and tenure metrics for 18–25 only
+  Pass/Fail: ___
+
+Test 4: Reset Filters
+  Step: Click "Reset All" button or clear all slicers manually
+  Expected:
+    - All filters removed
+    - Charts show full data (all ages, all contracts, all payment methods)
+    - Global 17% churn visible in all measures
+  Pass/Fail: ___
+
+7.5 ACCEPTANCE CRITERIA FOR Q4–Q6
+
+CRITERION 1: AGE GROUP CHURN ANALYSIS (Q4)
+✓ Column chart displays churn rates for all 4 age groups
+✓ Younger groups (18–25, 26–35) show higher churn than older (36–45, 45+)
+✓ Values match manual Excel pivot ±0.2%
+✓ Chart updates when Report_Month or Region slicer changed
+PASS WHEN: Chart shows clear trend (younger = higher risk) and values verified
+
+CRITERION 2: CONTRACT TYPE IMPACT (Q5)
+✓ Pie chart shows churn volume distribution by contract type
+✓ Monthly contracts represent majority of churn (60–70% typical)
+✓ Annual contracts show smallest churn volume (<15% typical)
+✓ Percentages sum to 100%
+PASS WHEN: Pie clearly shows Monthly dominance and Annual minimal impact
+
+CRITERION 3: PAYMENT METHOD CORRELATION (Q6)
+✓ Stacked bar chart shows churn count by payment method
+✓ Cash payments show highest churn (if applicable)
+✓ Credit card shows lowest churn (typical)
+✓ Color gradient applied (red/green stacking consistent)
+PASS WHEN: Chart visually distinct by payment method; top performer (low churn) clear
+
+================================================================================
+SECTION 8: EXPECTED INSIGHTS & BUSINESS OUTCOMES (Q4–Q6)
+================================================================================
+
+8.1 QUESTION 4: AGE GROUP CHURN ANALYSIS
+Expected Insight:
+  - Clear age stratification: 18–25 shows ~28% churn; 45+ shows ~12% churn
+  - Younger cohorts = lower commitment, higher experimental usage
+  - Older cohorts = established usage patterns, higher loyalty once onboarded
+  - Age effect INDEPENDENT of other factors (tenure, contract, payment)
+
+Business Action:
+  1. Design age-specific onboarding:
+     - 18–25: Gamification, instant feedback, mobile-first
+     - 26–35: Value orientation, productivity features
+     - 36–45: Ease of use, training materials
+     - 45+: Dedicated support, simplicity
+
+  2. Target retention by age:
+     - Critical window: 18–25 first 3 months (highest early churn)
+     - Upsell late: 36+ who pass 6-month milestone (lowest churn, highest LTV)
+
+  3. Product roadmap:
+     - Understand 18–25 usage patterns—what features do they abandon?
+     - Why 45+ sticky—replicate those behaviors for younger cohorts
+
+Expected Business Outcome:
+  - Reduce 18–25 churn from 28% to 20% in 6 months (via better onboarding)
+  - Increase lifetime value for 45+ by 15% (via advanced features they trust)
+  - Revenue growth: 30% of new customers are 18–25; each 5% churn reduction = $X revenue retention
+
+8.2 QUESTION 5: CONTRACT TYPE IMPACT
+Expected Insight:
+  - Monthly contracts = 3x higher churn than annual (typical: 25% vs. 8%)
+  - Quarterly = middle ground (~14%)
+  - Higher price at annual converts to lower churn (commitment device)
+  - Churn risk DOES NOT decrease at renewal if annual (common misconception)
+
+Business Action:
+  1. Pricing/contract strategy:
+     - Aggressive annual discounts: If annual = 8% churn, justify 15–20% discount vs. monthly
+     - Bundle incentives: 3-month free if renew annual (front-load value)
+     - Remove monthly option for low-fit segments (e.g., enterprise)
+
+  2. Go-to-market by contract type:
+     - SME/Retail: Frame annual as "commitment tier" (higher trust)
+     - Corporate: Enforce annual/multi-year (reduces churn to <5%)
+
+  3. Retention timing by contract:
+     - Monthly: Needs frequent engagement (weekly check-ins, success plays)
+     - Quarterly: Mid-point check at month 1.5 (catch mid-term issues)
+     - Annual: Pro-active at month 9 (renewal planning)
+
+Expected Business Outcome:
+  - Increase % of annual contracts from (current) to +10% within 2 quarters
+  - Reduce overall churn from 17% to 15% (via cohort shift to annual)
+  - Revenue stability: 50% annual contracts = more predictable MRR
+
+8.3 QUESTION 6: PAYMENT METHOD CORRELATION
+Expected Insight:
+  - Cash/manual payment = 2x higher churn than credit card (typical: 22% vs. 11%)
+  - Auto-renewal (credit with auto) = lowest churn (<5%)
+  - UPI = variable (depends on regional familiarity)
+  - Payment failures = strong churn signal (see Chunk 4)
+
+Business Action:
+  1. Payment optimization:
+     - Incentivize credit card adoption: "5% discount for auto-renew on credit card"
+     - Eliminate friction: 1-click renewal, saved payment method
+     - Regional adaptation: Offer UPI in India (emerging markets prefer modern methods)
+     - Deprecate cash: Phase out cash option or charge premium (cover admin cost)
+
+  2. Dunning management (beyond this guide):
+     - Monitor payment failures (credit card declined)
+     - Trigger retry logic within Power BI alerts (see Chunk 6)
+     - Proactive customer contact: Payment method refresh needed
+
+  3. Subscription design:
+     - Auto-renew default; make opt-out explicit (not default)
+     - Communicate renewal clearly 2 weeks prior
+     - Free tier with credit card = better conversion to paid than manual
+
+Expected Business Outcome:
+  - Shift 50% of manual payers to credit card auto-renew within 3 months
+  - Reduce churn from manual payment segment from 22% to 15%
+  - Revenue: Fewer failed payments = $X reduction in churn losses
+
+8.4 COMBINED INSIGHTS (Q4–Q6 Together)
+
+META-PATTERN:
+  High-Risk Profile:   18–25, Monthly contract, Cash payment = 30%+ churn
+  Healthy Profile:     45+, Annual contract, CC auto-renew = ~8% churn
+  
+  ROOT HYPOTHESIS:
+  Younger, price-sensitive users on short commitment + manual payment = low friction to exit.
+  Older, value-focused users on long commitment + auto-payment = high friction to exit.
+  
+  IMMEDIATE ACTION:
+  1. Segment portfolio: Identify % of customers in high-risk profile (estimate ~20–30%)
+  2. Tier retention investment: 
+     - High-risk 18–25/Monthly/Cash: Daily engagement, strong incentives
+     - Medium-risk 26–35/Quarterly/Debit: Weekly check-ins, moderate incentives
+     - Low-risk 45+/Annual/CC: Quarterly reviews, premium support
+  3. Price/packaging: 
+     - Reduce annual discount to 12% (currently 15%) to test price sensitivity
+     - Offer "annual plans starting 3 months" (reduce friction for skeptical 18–25)
+  
+  EXPECTED OUTCOME:
+  Reduce overall churn from 17% to 14% within 6 months, concentrated in high-risk segment.
+
+================================================================================
+SECTION 9: TRANSITION TO CHUNK 4
+================================================================================
+
+NEXT STEPS:
+Chunk 4 will implement Questions 7–9 (Behavioral & Engagement Analysis):
+  - Q7: How does customer tenure influence churn rate? (lifecycle analysis)
+  - Q8: How does usage level correlate with churn risk? (engagement metric)
+  - Q9: Are support ticket volumes a churn indicator? (support quality)
+
+New Features in Chunk 4:
+  - Calculated columns for tenure buckets
+  - Usage-based conditional columns
+  - New visuals: Scatter plot (usage vs. churn), Box plot (support tickets)
+  - New page: "Behavioral & Engagement Dashboard"
+
+Data Model Expansion:
+  - No new dimension tables (data in fact table)
+  - Calculated columns in Power Query: Tenure_Bucket, Usage_Category
+  - New measures: Avg Usage (by churn flag), Support Ticket stats
+
+DELIVERABLE: This Chunk 3 Guide (TXT file)
+  - File: Power_BI_Implementation_Guide_CHUNK_3.txt
+  - Save alongside Chunk 1 & 2 in project root
+
+POWER BI WORKBOOK STATUS:
+  - Expected .pbix size: 15–20 MB (with fact table, 4 dimension tables, 5 pages)
+  - Save file: Churn_Analysis_Chunk3.pbix (or version your file)
+  - Test: Open in Power BI, verify all 5+ measures visible in Fields pane
+
+================================================================================
+END OF CHUNK 3 - CUSTOMER SEGMENTATION & DEMOGRAPHICS
+================================================================================

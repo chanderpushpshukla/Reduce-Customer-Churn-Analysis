@@ -1,0 +1,1173 @@
+================================================================================
+POWER BI CHURN ANALYSIS: COMPREHENSIVE IMPLEMENTATION GUIDE
+CHUNK 5 - CUSTOMER EXPERIENCE & FINANCIAL IMPACT (QUESTIONS 10–12)
+================================================================================
+
+DOCUMENT VERSION: 1.0
+DATE: February 2026
+SCOPE: Questions 10–12 (Satisfaction, Risk Segmentation, Revenue Impact)
+COMPLEXITY: Advanced—introduces financial metrics, executive reporting, scenario modeling
+
+================================================================================
+EXECUTIVE SUMMARY - CHUNK 5
+================================================================================
+
+This chunk implements customer experience and financial impact analysis that
+directly supports executive decision-making and board reporting:
+
+- Question 10: How does customer satisfaction relate to churn? (CSAT linkage)
+- Question 11: Which customer segments are at highest churn risk? (Risk matrix)
+- Question 12: What is the financial impact of churn? (Revenue-at-risk & LTV)
+
+These questions enable:
+- CFO/Finance-focused business cases (ROI of retention investment)
+- Executive dashboards with KPIs and financial metrics
+- Risk segmentation and portfolio management
+- Scenario modeling ("If we reduce churn by X%, revenue impact is…")
+
+Key Insight: Questions 10–12 connect operational metrics (churn %) to business impact ($).
+
+DELIVERABLES:
+1. Satisfaction measurement framework and visuals
+2. Multi-dimensional risk segmentation matrix
+3. Financial impact calculations (revenue at risk, LTV, payback period)
+4. Executive dashboard with financial KPIs
+5. Scenario modeler setup (parameterized what-if analysis)
+6. Board-ready summary and business case template
+
+ESTIMATED EFFORT: Medium-High (6–8 hours; includes financial calculations,
+currency formatting, and executive-level visuals)
+
+================================================================================
+SECTION 1: DATA REQUIREMENTS & PREPROCESSING (Q10–Q12)
+================================================================================
+
+1.1 DATA SOURCES & COLUMNS
+
+For Q10 (Satisfaction):
+  Source: fact_customer_churn
+  Columns Required:
+    - Satisfaction_Score (numeric, 1–5 scale): CSAT rating
+    - NPS_Score (numeric, -100 to +100, optional): Net Promoter Score
+    - Complaint_Flag (Yes/No): Whether customer filed complaint
+    - Churn_Flag
+    - Customer_ID
+    - Report_Month
+  
+  Data Quality:
+    - Satisfaction_Score: 1–5 only, no nulls (fill blanks with median 3)
+    - NPS_Score: -100 to +100 (if present); convert to NPS category (Detractor, Passive, Promoter)
+    - No outliers (e.g., satisfaction = 10)
+
+For Q11 (Risk Segmentation):
+  Source: fact_customer_churn + all dimensions (Age, Contract, Payment, Region, Tenure, Usage)
+  Columns Required:
+    - ALL dimensions from Q4–Q9 (Age_Group, Contract_Type, Region, Tenure_Bucket, etc.)
+    - Churn_Risk_Profile (calculated in Chunk 4, Section 3.1)
+    - Customer_Segment (if available: Retail, SME, Corporate)
+    - Monthly_Charges
+    - Total_Revenue
+  
+  Data Quality:
+    - All dimensions populated (no unknowns)
+    - Monthly_Charges > 0 (no free tier; or separate free tier analysis)
+    - Churn_Risk_Profile calculated and validated
+
+For Q12 (Financial Impact):
+  Source: fact_customer_churn
+  Columns Required:
+    - Churn_Flag
+    - Customer_ID
+    - Total_Revenue (cumulative revenue from customer to date)
+    - Monthly_Charges (recurring monthly fee)
+    - Join_Date (to calculate lifetime)
+    - Churn_Date (to calculate revenue at loss date)
+    - Acquisition_Cost (optional; for LTV calculation)
+  
+  Data Quality:
+    - Total_Revenue: Non-negative, realistic (validate outliers)
+    - Monthly_Charges: Consistent; matches contract type pricing
+    - No negative revenue (refunds handled separately)
+    - Currency: Consistent (USD, EUR, etc.; not mixed)
+
+1.2 POWER QUERY PREPROCESSING
+
+For Q10, standardize Satisfaction_Score:
+
+  STEP 1: Fill Blanks with Median
+  - Select Satisfaction_Score
+  - Transform > Replace Values
+  - Find: (blank/error)
+  - Replace: 3 (median of 1–5 scale)
+  - Click Replace All
+
+  STEP 2: Create NPS Category (if NPS_Score available)
+  - Add Column > Conditional Column
+  - Name: "NPS_Category"
+  - Formula:
+    if [NPS_Score] >= 9 then "Promoter"
+    else if [NPS_Score] >= 7 then "Passive"
+    else "Detractor"
+
+  STEP 3: Create Satisfaction Tier
+  - Add Column > Conditional Column
+  - Name: "Satisfaction_Tier"
+  - Formula:
+    if [Satisfaction_Score] >= 4 then "Satisfied"
+    else if [Satisfaction_Score] = 3 then "Neutral"
+    else "Dissatisfied"
+
+For Q11, ensure all dimensions present (from Chunks 3–4):
+
+  Verify columns exist:
+    - Age_Group (from Q4)
+    - Contract_Type (from Q5)
+    - Payment_Method (from Q6)
+    - Tenure_Bucket (from Q7)
+    - Usage_Category (from Q8)
+    - Region (from Q3)
+    - Customer_Segment (if available)
+    - Churn_Risk_Profile (calculated in Chunk 4)
+
+For Q12, validate financial columns:
+
+  STEP 1: Ensure Monthly_Charges > 0
+  - Filter > Remove rows where Monthly_Charges <= 0
+  - (If free tier needed, create separate analysis)
+
+  STEP 2: Calculate Lifetime Value
+  - Add Column > Custom Column
+  - Name: "Customer_LTV"
+  - Formula: [Total_Revenue] (if already cumulative)
+    OR: [Monthly_Charges] * [Tenure_Months] (if need to calculate)
+
+  STEP 3: Calculate Months Until Churn (for projections)
+  - Add Column > Custom Column
+  - Name: "Months_to_Churn"
+  - Formula:
+    if [Churn_Flag] = TRUE then
+      DATEDIFF([Churn_Date], [Join_Date], "M")
+    else
+      DATEDIFF(TODAY(), [Join_Date], "M") // Still active
+
+================================================================================
+SECTION 2: DAX MEASURES FOR QUESTIONS 10–12
+================================================================================
+
+2.1 SATISFACTION MEASURES (Q10)
+
+MEASURE 1: Average Satisfaction Score (All Customers)
+Purpose: Monitor overall customer satisfaction; leading indicator for retention
+Audience: CEO, VP Customer Success, Board (as retention risk metric)
+
+DAX CODE:
+  Avg Satisfaction (All) = AVERAGE('fact_customer_churn'[Satisfaction_Score])
+  
+  Avg Satisfaction Churned = CALCULATE(
+    AVERAGE('fact_customer_churn'[Satisfaction_Score]),
+    'fact_customer_churn'[Churn_Flag] = TRUE()
+  )
+  
+  Avg Satisfaction Active = CALCULATE(
+    AVERAGE('fact_customer_churn'[Satisfaction_Score]),
+    'fact_customer_churn'[Churn_Flag] = FALSE()
+  )
+
+Comment: Satisfaction 4.0+ = healthy; 3.0–3.9 = at-risk; <3.0 = critical.
+Format: Decimal, 1 place (e.g., 3.7/5.0)
+
+MEASURE 2: Satisfaction Distribution (Count by Tier)
+Purpose: Segment customers by satisfaction level for targeted intervention
+Audience: Customer Success, Retention teams
+
+DAX CODE:
+  Satisfied Customers (4-5) = CALCULATE(
+    DISTINCTCOUNT('fact_customer_churn'[Customer_ID]),
+    'fact_customer_churn'[Satisfaction_Score] >= 4
+  )
+  
+  Neutral Customers (3) = CALCULATE(
+    DISTINCTCOUNT('fact_customer_churn'[Customer_ID]),
+    'fact_customer_churn'[Satisfaction_Score] = 3
+  )
+  
+  Dissatisfied Customers (1-2) = CALCULATE(
+    DISTINCTCOUNT('fact_customer_churn'[Customer_ID]),
+    'fact_customer_churn'[Satisfaction_Score] <= 2
+  )
+
+Comment: Used for waterfall chart and segmentation
+Format: Whole number (e.g., 850, 600, 250)
+
+MEASURE 3: Satisfaction-Churn Linkage (Cross-tabulation measure)
+Purpose: Quantify churn risk by satisfaction level
+Audience: Analytics, Product (evidence of satisfaction → retention link)
+
+DAX CODE:
+  Churn Rate by Satisfaction = 
+    VAR SatisfactionGroup = VALUES('fact_customer_churn'[Satisfaction_Score])
+    RETURN
+      IF(
+        HASONEVALUE('fact_customer_churn'[Satisfaction_Score]),
+        [Churn Rate %],
+        BLANK()
+      )
+
+  // Alternative explicit version:
+  Churn Rate at Satisfaction Tier = 
+    VAR TierCount = DISTINCTCOUNT('fact_customer_churn'[Customer_ID])
+    VAR TierChurned = CALCULATE(
+      DISTINCTCOUNT('fact_customer_churn'[Customer_ID]),
+      'fact_customer_churn'[Churn_Flag] = TRUE()
+    )
+    RETURN
+      IF(TierCount = 0, BLANK(), DIVIDE(TierChurned, TierCount) * 100)
+
+EXPECTED OUTPUT:
+  Satisfaction 5: 3% churn
+  Satisfaction 4: 5% churn
+  Satisfaction 3: 18% churn (cliff)
+  Satisfaction 2: 35% churn
+  Satisfaction 1: 60% churn
+
+2.2 RISK SEGMENTATION MEASURES (Q11)
+
+MEASURE 4: High-Risk Customer Segments (Count)
+Purpose: Identify total customers in high-risk segments for portfolio prioritization
+Audience: Executive, Sales, Customer Success
+
+DAX CODE:
+  High Risk Segment Count = CALCULATE(
+    DISTINCTCOUNT('fact_customer_churn'[Customer_ID]),
+    'fact_customer_churn'[Churn_Risk_Profile] IN {"Critical", "High"},
+    'fact_customer_churn'[Churn_Flag] = FALSE() // Active customers only (at-risk)
+  )
+
+Comment: Shows # of customers needing urgent retention attention.
+Format: Whole number (e.g., 127 customers)
+
+MEASURE 5: Segment Churn Rate Matrix (3–4 dimensions)
+Purpose: Cross-tabular churn rates by multiple dimensions
+Audience: Segment owners, Regional leaders
+
+DAX CODE:
+  Churn Rate % (Multi-dim) = [Churn Rate %]
+  
+  // Comment: Standard [Churn Rate %] measure automatically filters by
+  // multiple dimension context (Age × Contract × Region, etc.)
+
+Use Case:
+  Create matrix visual:
+    ROWS: Age_Group
+    COLUMNS: Contract_Type
+    VALUES: [Churn Rate %]
+    
+  OUTPUT:
+    Age Group | Monthly | Quarterly | Annual
+    ─────────────────────────────────────
+    18–25     | 28.3%   | 16.2%     | 8.5%
+    26–35     | 18.5%    | 12.8%     | 4.2%
+    36–45     | 14.1%    | 9.3%      | 2.8%
+    45+       | 11.8%    | 8.2%      | 2.1%
+
+  Interpretation: Youngest + Monthly = highest churn (28.3%); Oldest + Annual = lowest (2.1%)
+
+MEASURE 6: Revenue-Weighted Risk Score
+Purpose: Identify highest-impact risk segments (account for customer value)
+Audience: Finance, Sales, CFO
+
+DAX CODE:
+  Revenue at Risk = 
+    CALCULATE(
+      SUM('fact_customer_churn'[Monthly_Charges]) * 
+        COUNTROWS(
+          FILTER(
+            'fact_customer_churn',
+            'fact_customer_churn'[Churn_Risk_Profile] = "Critical"
+          )
+        ),
+      'fact_customer_churn'[Churn_Flag] = FALSE() // Only at-risk, still active
+    )
+
+  // Simpler alternative:
+  Revenue from Critical Risk = CALCULATE(
+    SUM('fact_customer_churn'[Monthly_Charges]),
+    'fact_customer_churn'[Churn_Risk_Profile] = "Critical",
+    'fact_customer_churn'[Churn_Flag] = FALSE()
+  )
+
+Comment: Weights risk by revenue impact. Example: 50 critical customers @ $100/mo each 
+         = $5,000/month revenue at risk.
+Format: Currency ($), 0 decimals (e.g., $15,000)
+
+2.3 FINANCIAL IMPACT MEASURES (Q12)
+
+MEASURE 7: Total Revenue Lost from Churn
+Purpose: Quantify financial impact of churn for business case
+Audience: CFO, Board, Finance
+
+DAX CODE:
+  Total Revenue Lost (Churned) = CALCULATE(
+    SUM('fact_customer_churn'[Total_Revenue]),
+    'fact_customer_churn'[Churn_Flag] = TRUE()
+  )
+
+Comment: Cumulative revenue lost from all churned customers to date.
+Example: 679 churned customers × avg $150 revenue = $101,850 loss
+Format: Currency ($), 0 decimals
+
+MEASURE 8: Monthly Revenue Churn (Recurring Revenue Lost)
+Purpose: Forecast recurring revenue impact (MRR loss)
+Audience: Finance, CFO (revenue forecast)
+
+DAX CODE:
+  MRR Lost to Churn = CALCULATE(
+    SUM('fact_customer_churn'[Monthly_Charges]),
+    'fact_customer_churn'[Churn_Flag] = TRUE()
+  )
+
+Comment: Annualized MRR loss = MRR Lost × 12
+Example: If 60 customers churn/month @ avg $50/mo each = $3,000 MRR loss = $36,000 ARR
+Format: Currency ($), 0 decimals
+
+MEASURE 9: Customer Lifetime Value (LTV) by Segment
+Purpose: Value each customer segment to inform retention investment priorities
+Audience: CFO, Finance (payback analysis)
+
+DAX CODE:
+  Avg LTV = AVERAGE('fact_customer_churn'[Customer_LTV])
+  
+  // If Customer_LTV not pre-calculated:
+  Avg LTV (Calculated) = 
+    AVERAGE(
+      'fact_customer_churn'[Monthly_Charges] * 'fact_customer_churn'[Tenure_Months]
+    )
+  
+  // By segment (e.g., by Contract Type):
+  LTV by Contract = 
+    CALCULATE(
+      AVERAGE('fact_customer_churn'[Customer_LTV]),
+      ALL('fact_customer_churn'[Churn_Flag]) // Average of all, not filtered by churn
+    )
+
+Comment: Example LTVs:
+  - Monthly contract: Avg $500 LTV (short tenure)
+  - Annual contract: Avg $1,800 LTV (long tenure)
+  - Insight: Annual contracts worth 3.6x monthly; justifies 20% discount
+
+Format: Currency ($)
+
+MEASURE 10: Revenue at Risk (Projected Annual Loss)
+Purpose: Forecast annual revenue impact if churn continues at current rate
+Audience: CFO, Executive team
+
+DAX CODE:
+  Annual Revenue at Risk = [MRR Lost to Churn] * 12
+
+  // Alternative: Project current churn rate forward
+  Projected Annual Churn Loss (Cohort) = 
+    VAR CurrentChurnRate = [Churn Rate %] / 100
+    VAR ActiveCustomers = [Active Customers]
+    VAR AvgMonthlyCost = AVERAGE('fact_customer_churn'[Monthly_Charges])
+    VAR ProjectedMonthlyChurn = ActiveCustomers * CurrentChurnRate
+    RETURN
+      ProjectedMonthlyChurn * AvgMonthlyCost * 12
+
+Comment: If current churn 15% / 1,000 active customers @ $75/mo average:
+  Projected annual loss = 150 churn/month × $75 × 12 = $135,000 ARR at risk
+
+Format: Currency ($)
+
+MEASURE 11: Payback Period (for retention investment)
+Purpose: Justify retention spend (if CS investment = $X, payback = Y months)
+Audience: CFO, Finance
+
+DAX CODE:
+  Payback Period Months = 
+    VAR RetentionInvestment = 50000 // Example: $50K/year CS team cost
+    VAR MonthlyRetentionSavings = [MRR Lost to Churn]
+    RETURN
+      IF(MonthlyRetentionSavings = 0, BLANK(), RetentionInvestment / MonthlyRetentionSavings)
+
+Comment: If $50K investment prevents $10K MRR churn = 5 months payback (ROI > 2x annually)
+Example calculation:
+  - Current MRR churn: $3,000/month ($36K/year lost)
+  - CS team cost: $120K/year
+  - Assumed prevention: 30% churn reduction (save $10.8K/year)
+  - ROI = $10.8K / $120K = 9% direct ROI (not including:
+    improved NPS, reduced acquisition to replace, brand damage prevention)
+
+Format: Decimal, 1 place (e.g., 5.4 months)
+
+================================================================================
+SECTION 3: VISUALS FOR QUESTIONS 10–12
+================================================================================
+
+3.1 VISUAL 1: GAUGE CHART FOR SATISFACTION (Q10)
+
+PURPOSE: Monitor satisfaction as leading indicator for retention health
+
+Visual Type: Gauge Chart (speedometer-style)
+
+FIELD CONFIGURATION:
+  - VALUES: [Avg Satisfaction (All)]
+  - TARGET (Optional): 4.0 (goal satisfaction score)
+  - MIN/MAX: 1 to 5 (CSAT scale range)
+
+FORMATTING:
+
+  Title:
+    - "Overall Customer Satisfaction"
+    - Font: 14pt, Bold
+
+  Gauge Settings:
+    - Min Value: 1
+    - Max Value: 5
+    - Target Value: 4.0 (stretch goal)
+  
+  Color Zones (Ranges):
+    - Red (1–2.5): Dissatisfied, churn risk
+    - Yellow (2.5–3.5): Neutral, caution zone
+    - Green (3.5–5): Satisfied, healthy
+  
+  Needle Style:
+    - Color: Dark blue (#1F4E78)
+    - Width: 2pt
+  
+  Data Labels:
+    - Show value: YES (e.g., "3.7/5.0")
+    - Position: Center, large font (18pt)
+
+EXPECTED DISPLAY:
+  ```
+          5.0
+         ╱   ╲
+       4.0    ▼ 3.7 (current)
+      ╱         ╲
+     3.0    ⬤ ◄── needle
+      ╲             ╱
+       2.0        ╱
+         ╲   ╱
+          1.0
+    
+    Red | Yellow | Green
+    1–2.5 2.5–3.5 3.5–5
+  ```
+
+POSITIONING ON REPORT PAGE:
+  - Top-left corner of executive dashboard
+  - Occupy 1 column × 1 row (~300px × 300px)
+
+INTERPRETATION:
+  - Gauge at 4.0+ = green (healthy, high retention)
+  - Gauge at 3.2–3.9 = yellow (monitor, risk rising)
+  - Gauge below 3.2 = red (urgent; churn likely spiking)
+
+DRILL-THROUGH:
+  - Click gauge → Navigate to Satisfaction Detail page (Q10 focused)
+
+3.2 VISUAL 2: STACKED COLUMN CHART FOR SATISFACTION DISTRIBUTION (Q10)
+
+PURPOSE: Show distribution of customers across satisfaction tiers
+Audience: Identify where to focus satisfaction improvements
+
+Visual Type: Stacked Column Chart
+
+FIELD CONFIGURATION:
+  - AXIS (X-axis): Report_Month (or Satisfaction_Tier for distribution)
+  - LEGEND: Satisfaction_Tier (Satisfied, Neutral, Dissatisfied)
+    OR: Satisfaction_Score (1, 2, 3, 4, 5)
+  
+  - VALUES (Y-axis): [Customer Count by Tier] measures or DISTINCTCOUNT(Customer_ID)
+
+VARIANT A (RECOMMENDED): Show trend over time
+  - X-axis: Report_Month (last 12 months)
+  - Stacked by Satisfaction_Tier
+  - Shows: Are we improving satisfaction month-over-month?
+
+VARIANT B: Show distribution snapshot
+  - X-axis: Single month (current)
+  - Y-axis: Stacked counts of satisfied/neutral/dissatisfied
+  - Shows: What % of base are in each tier?
+
+FORMATTING (Variant A, Trend):
+
+  Title:
+    - "Satisfaction Distribution Trend (by Month)"
+    - Font: 14pt, Bold
+
+  Legend:
+    - Satisfied (4–5): Green (#70AD47)
+    - Neutral (3): Yellow (#FFC000)
+    - Dissatisfied (1–2): Red (#FF0000)
+    - Position: Right
+
+  Data Labels:
+    - Show: OFF (avoid cluttering stacked chart)
+    - OR: Show % for each segment
+
+  X-Axis:
+    - Months in order (Jan, Feb, Mar, …)
+    - Gridlines: ON
+
+  Y-Axis:
+    - Total customers (sum of all tiers)
+    - Gridlines: ON
+
+EXPECTED DISPLAY:
+  ```
+  Satisfaction Distribution Trend
+  4,000 ┤ ╔════════════════╗ (Green = Satisfied)
+        │ ║ Satisfied 60%  ║
+  3,000 ┤ ╠════════════════╣
+        │ ║ Neutral 25%    ║ (Yellow = Neutral)
+  2,000 ┤ ╠════════════════╣
+        │ ║ Dissatisfied   ║ (Red = Dissatisfied)
+  1,000 ┤ ║     15%        ║
+        │ ╚════════════════╝
+      0 ┴───────────────────
+        Jan Feb Mar Apr May
+  
+  Trend: If green increasing & red decreasing = improving
+  ```
+
+POSITIONING ON REPORT PAGE:
+  - Top-middle, next to Gauge
+  - Occupy 2 columns × 2 rows (~600px × 400px)
+
+3.3 VISUAL 3: HEATMAP FOR RISK SEGMENTATION (Q11)
+
+PURPOSE: Identify high-risk segment combinations at a glance
+
+Visual Type: Matrix Table with Conditional Formatting (heatmap)
+
+FIELD CONFIGURATION:
+  - ROWS: Age_Group (18–25, 26–35, 36–45, 45+)
+  - COLUMNS: Contract_Type (Monthly, Quarterly, Annual)
+  - VALUES: [Churn Rate %] AND [Revenue at Risk]
+
+FORMATTING:
+
+  Title:
+    - "Churn Risk Matrix - Age × Contract Type"
+    - Font: 14pt, Bold
+
+  Cell Conditional Color:
+    - Min (low churn %): Green (#70AD47)
+    - Mid (medium, ~15%): Yellow (#FFC000)
+    - Max (high churn %): Red (#FF0000)
+    - Gradient: Continuous, linear scale
+
+  Cell Content:
+    - Primary value: Churn Rate % (large font)
+    - Secondary value: Customer count (smaller, e.g., "n=120")
+    - Separated by line break
+
+  Example cell:
+    ┌─────────────┐
+    │    28.3%    │ ← Churn rate (red background)
+    │   n=420     │ ← Customer count
+    └─────────────┘
+
+  Cell Borders:
+    - 1pt light gray between cells
+    - Bold 2pt dark gray around matrix border
+
+EXPECTED DISPLAY:
+  ```
+  Churn Risk Matrix (Age × Contract Type)
+  
+  Age Group \ Contract  Monthly    Quarterly   Annual
+  ─────────────────────────────────────────────────────
+  18–25                 28.3%      16.2%       8.5%
+                       🔴RED     (n=158)      (n=45)
+                       (n=264)
+  
+  26–35                 18.5%      12.8%       4.2%
+                       (n=312)    (n=189)     (n=98)
+  
+  36–45                 14.1%      9.3%        2.8%
+                       (n=198)    (n=145)     (n=178)
+  
+  45+                   11.8%      8.2%        2.1%
+                       (n=209)    (n=156)     (n=314)
+  
+  Legend: 🔴Red (>20%) 🟠Orange (15-20%) 🟡Yellow (10-15%) 🟢Green (<10%)
+  ```
+
+POSITIONING ON REPORT PAGE:
+  - Middle-left, below line charts
+  - Occupy 3 columns × 2 rows (~750px × 350px)
+
+INTERPRETATION:
+  - Red cells = priority segments (highest intervention ROI)
+  - 18–25 + Monthly = #1 risk (28.3%); 2.8x higher than 45+ + Annual (8.5%)
+  - Action: For every CS resource, allocate 3 to high-risk, 1 to low-risk
+
+3.4 VISUAL 4: WATERFALL CHART FOR FINANCIAL IMPACT (Q12)
+
+PURPOSE: Show revenue loss progression and impact of churn over time
+Audience: CFO, Finance, Board (executive reporting)
+
+Visual Type: Waterfall Chart
+
+FIELD CONFIGURATION:
+  - CATEGORY (X-axis): Revenue component (Baseline, Q1 Churn, Q2 Churn, … , Projected)
+  - VALUES (Y-axis): Currency ($MRR or $ARR)
+  - BREAKDOWN: By segment or month (optional)
+
+VARIANT: Monthly Revenue Waterfall
+  - Starting value: Prior month active MRR
+  - Down steps: Churn loss each month
+  - Up/down steps: New customer adds, churn recoveries
+  - Ending value: Current month active MRR
+
+FORMATTING:
+
+  Title:
+    - "Monthly Revenue Impact: Churn vs. New Customer Acquisition"
+    - Font: 14pt, Bold
+
+  Connectors:
+    - Show connector lines: YES (between steps)
+    - Color: Gray, dashed
+
+  Bar Colors:
+    - Baseline (starting): Blue (#4472C4)
+    - Negative (churn loss): Red (#FF0000)
+    - Positive (new adds): Green (#70AD47)
+    - Final (total): Blue (#4472C4)
+
+  Data Labels:
+    - Show: YES on all bars
+    - Format: Currency, 0 decimals (e.g., "-$3,000")
+    - Position: Top of bar
+
+  Y-Axis:
+    - Currency scale (e.g., $0 to $50K)
+    - Gridlines: ON
+
+EXPECTED DISPLAY:
+  ```
+  Monthly Revenue Impact
+  $50K ┤                         ┌─────────┐ (Final)
+       │                         │$42,500  │
+  $40K ┤     ┌─────────┐ ┌──────┴─────────┘
+       │     │ Baseline│ │Churn
+  $30K ┤     │$46,000  │ │Loss
+       │ ┌───┴─────────┘ │ ┌────────────┐
+  $20K ┤ │               │ │  New      │ ← Green (adds)
+       │ │   ▼           │ │  Adds     │
+  $10K ┤ │ ┌──────────┐  │ │           │
+       │ │ │          │  │ │           │
+    $0 ┤─┴─┴──────────┴──┴─┴───────────┴─
+       
+       Baseline  Q1 Churn  Q2 Churn  Q3 Adds  Final
+       $46K      -$3K      -$2.5K    +$1.5K   $42.5K
+  
+  Interpretation: We're losing more to churn (-$5.5K) than adding (+$1.5K)
+  Net impact: Down $4K MRR = $48K ARR lost (35% churn, 3% new acquisition)
+  ```
+
+POSITIONING ON REPORT PAGE:
+  - Middle-right, next to risk matrix
+  - Occupy 3 columns × 2 rows (~750px × 400px)
+
+DRILL-THROUGH / INTERACTIVITY:
+  - Click for detail: "What's driving churn?" → Navigate to Churn Drivers page
+
+3.5 VISUAL 5: EXECUTIVE KPI SUMMARY (Multi-card)
+
+PURPOSE: High-level dashboard summary for C-suite and board
+Audience: CEO, CFO, Board Members
+
+Visual Type: Multiple KPI Cards in a grid
+
+CARDS:
+
+  Card 1: Churn Rate (%)
+    - Value: 17.0%
+    - Target: 12.0%
+    - Status: Red (above target)
+    - Font: 24pt, bold
+
+  Card 2: Revenue at Risk (Annual)
+    - Value: $135,000
+    - Prior: $128,000
+    - Trend: ↑ Up 5.5% YoY (red arrow)
+    - Font: 20pt, bold
+
+  Card 3: Active Customer Base
+    - Value: 3,321
+    - Prior: 3,450
+    - Trend: ↓ Down 3.7% (red arrow)
+    - Font: 20pt, bold
+
+  Card 4: Avg Customer LTV
+    - Value: $1,850
+    - Benchmark: $2,100 (industry)
+    - Status: 12% below target (yellow alert)
+    - Font: 18pt, bold
+
+  Card 5: High-Risk Customers
+    - Value: 127
+    - % of base: 3.8%
+    - Trend: ↑ Up 15 vs. prior month (orange alert)
+    - Font: 18pt, bold
+
+  Card 6: Satisfaction Score
+    - Value: 3.7/5.0
+    - Target: 4.0
+    - Status: 7.5% below (yellow)
+    - Font: 18pt, bold
+
+FORMATTING (Per Card):
+
+  Background:
+    - White or very light gray
+    - Border: 1–2pt, colored (Red for critical, Yellow for caution, Green for healthy)
+
+  Status Color Coding:
+    - RED border: KPI below acceptable threshold
+    - YELLOW border: KPI at caution level
+    - GREEN border: KPI healthy
+
+  Comparison Indicator:
+    - Show % change from prior month/quarter
+    - Red up arrow (↑) = worsening for churn/risk; Green down arrow (↓) = improving
+    - Green up arrow (↑) = improving for revenue/satisfaction; Red down (↓) = worsening
+
+POSITIONING ON REPORT PAGE (Top of Executive Dashboard):
+  - Full-width banner, top of page
+  - Grid: 2 rows × 3 cards per row
+  - Total ~800px height, full width
+
+3.6 VISUAL 6: CUSTOMER DETAIL TABLE (Reference)
+
+PURPOSE: Segment-level breakdown for analysis and deep dives
+
+Visual Type: Matrix Table
+
+FIELD CONFIGURATION:
+
+  ROWS:
+    - Customer_Segment OR Age_Group + Contract_Type (nested)
+
+  COLUMNS:
+    - Count of Customers
+    - Count of Churned
+    - Active Count
+    - Churn Rate %
+    - Avg Satisfaction
+    - Avg Monthly Charges
+    - Total Revenue Loss (if churned segment)
+    - Avg LTV
+
+TABLE EXAMPLE:
+  ```
+  Segment          | Count | Churned | Active | Churn % | Sat. | Avg $ | Rev Loss
+  ────────────────────────────────────────────────────────────────────────────
+  18–25, Monthly   | 420   | 119     | 301    | 28.3%   | 2.8  | $45   | $17,850
+  18–25, Quarterly | 158   | 25      | 133    | 15.8%   | 3.2  | $75   | $1,875
+  18–25, Annual    | 45    | 3       | 42     | 6.7%    | 4.1  | $120  | $360
+  26–35, Monthly   | 312   | 58      | 254    | 18.6%   | 3.4  | $50   | $2,900
+  ...
+  ────────────────────────────────────────────────────────────────────────────
+  TOTAL            | 4,000 | 679     | 3,321  | 17.0%   | 3.7  | $75   | $101,850
+  ```
+
+FORMATTING:
+  - Alternating row colors (white, light gray)
+  - Header row: Bold, dark background
+  - Total row: Bold, darker background, doubled border
+  - Conditional formatting on Churn % (green ← low | high → red)
+
+POSITIONING:
+  - Bottom of page, full width, scrollable
+
+================================================================================
+SECTION 4: REPORT PAGE DESIGN - EXECUTIVE DASHBOARD
+================================================================================
+
+4.1 PAGE NAME & PURPOSE
+
+Page Name: "Executive Dashboard" OR "Financial Impact & Risk"
+Alternative: "Business Impact", "Retention ROI"
+Purpose: C-level view of churn, its financial impact, and investment case
+Intended Audience: CEO, CFO, Board Members, VP Customer Success, Sales Leadership
+
+4.2 PAGE LAYOUT DIAGRAM
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│ PAGE TITLE: "Customer Retention Impact & Financial Summary"           │
+│ Subtitle: "Churn metrics, at-risk metrics, financial impact, actionable metrics" │
+└────────────────────────────────────────────────────────────────────────┘
+
+KPI BANNER (Top Row, Full-width):
+┌─────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
+│ Churn:  │ │ Revenue  │ │ Active   │ │ Avg LTV: │ │ At-Risk: │ │ Sat./5:  │
+│  17.0%  │ │ at Risk: │ │Customers:│ │ $1,850   │ │  127 cust│ │  3.7/5   │
+│ 🔴Above │ │ $135K/yr │ │ 3,321    │ │ -12% vs  │ │ +15% MoM │ │  -7% vs  │
+│ target  │ │ +5.5% YoY│ │ -3.7% YoY│ │ bench    │ │          │ │  target  │
+└─────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘
+
+FILTERS (Below KPI row):
+┌────────────────────────────────────────────────────────────────────────┐
+│ [Report_Month ▼] [Region ▼] [Segment ▼] [Risk_Level ▼] [Reset ◄]    │
+└────────────────────────────────────────────────────────────────────────┘
+
+ANALYSIS GRID (4 visuals):
+┌──────────────────────────────────┐  ┌──────────────────────────────────┐
+│ GAUGE CHART: Satisfaction        │  │ HEATMAP: Risk Matrix             │
+│ Goal: 4.0/5.0, Current: 3.7      │  │ (Age × Contract Churn %)         │
+│                                  │  │                                  │
+│ (Gauge needle at 3.7)            │  │ 18–25  | 28.3% | 16.2% | 8.5%  │
+│                                  │  │ 26–35  | 18.5% | 12.8% | 4.2%  │
+└──────────────────────────────────┘  │ etc.                             │
+                                       └──────────────────────────────────┘
+
+┌──────────────────────────────────┐  ┌──────────────────────────────────┐
+│ STACKED COLUMN: Satisfaction     │  │ WATERFALL: Monthly Revenue Impact│
+│ Distribution Trend (12 months)   │  │ Baseline → Churn Loss → Adds → End
+│ Green increasing, red decreasing │  │                                  │
+│                                  │  │ Shows: -$5K net MRR impact       │
+└──────────────────────────────────┘  └──────────────────────────────────┘
+
+DETAIL TABLE (Full-width, scrollable):
+┌────────────────────────────────────────────────────────────────────────┐
+│ Segment Financial Summary                                              │
+│ Segment | Count | Churn | Active | Churn % | Sat | Rev Loss | LTV    │
+│ [rows with segment detail; color-coded by risk]                       │
+│ TOTAL   | 4000  | 679   | 3321   | 17.0%   | 3.7 | $101,850 | $1,850 │
+└────────────────────────────────────────────────────────────────────────┘
+
+INSIGHTS & RECOMMENDATIONS (Bottom text box):
+┌────────────────────────────────────────────────────────────────────────┐
+│ KEY FINDINGS:                                                          │
+│ • 127 customers at critical risk (3.8% of base); +15 from last month  │
+│ • Highest churn driven by Price Sensitivity (18–25, Monthly contracts)│
+│ • Revenue at risk: $135K/year (if churn continues at current rate)   │
+│ • Satisfaction declining (3.7 → target 4.0); early warning signal     │
+│ • ROI CASE: $50K CS investment annually prevents $135K revenue loss  │
+│                                                                        │
+│ RECOMMENDED ACTIONS (Priority Order):                                 │
+│ 1. Improve onboarding for 18–25, Monthly segment (28.3% churn)       │
+│ 2. Escalate support quality (satisfaction 2.8–3.4) for at-risk cohort│
+│ 3. Annual contract incentive: 20% discount → reduce churn 28% → 12%  │
+│ 4. Assign dedicated CSM to Critical Risk customers (127 accounts)    │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+4.3 SLICER CONFIGURATION
+
+Slicer 1: Report_Month
+  - Field: dim_Calendar[YearMonth_Text]
+  - Type: Dropdown or date range slider
+  - Default: Current month (or YTD)
+  - Interaction: Filters all visuals
+
+Slicer 2: Region
+  - Field: fact_customer_churn[Region]
+  - Type: Dropdown multi-select
+  - Default: (All)
+  - Interaction: Filters all visuals
+
+Slicer 3: Customer_Segment
+  - Field: fact_customer_churn[Customer_Segment] (if available)
+  - Type: Dropdown
+  - Default: (All)
+  - Interaction: Filters all visuals & table
+
+Slicer 4: Risk_Level (Optional, for specific viewing)
+  - Field: Churn_Risk_Profile (calculated)
+  - Type: Dropdown
+  - Default: All
+  - Values: Critical, High, Medium, Low
+  - Interaction: Filters table only (not charts, to preserve overview)
+
+4.4 PAGE FORMATTING & STYLING
+
+Background:
+  - Color: White or #F5F5F5 (very light gray)
+  - Transparency: 0%
+
+Title/Header:
+  - Text: "Customer Retention Impact & Financial Summary"
+  - Font: Segoe UI, 16pt, Bold, #1F4E78
+  - Background: #D9E1F2 (light blue), full-width banner
+  - Padding: 15px top/bottom
+
+KPI Card Borders:
+  - Red: For metrics above threshold (bad)
+  - Yellow: For metrics at caution level
+  - Green: For metrics on target (good)
+  - Border width: 2–3pt
+
+Color Scheme (Consistent with Chunks 1–4):
+  - Primary (KPI, charts): Blue (#4472C4)
+  - Risk: Red (#FF0000) for high, Yellow (#FFC000) for medium, Green (#70AD47) for low
+  - Success: Green (#70AD47); Alert: Red (#FF0000)
+  - Waterfall: Red (churn), Green (adds)
+
+Font Standards:
+  - Title: Segoe UI, 14–16pt, Bold
+  - KPI values: 18–24pt, Bold, color-coded
+  - Chart labels: 9–10pt, Regular
+  - Table headers: 10pt, Bold
+
+================================================================================
+SECTION 5: TESTING & VALIDATION (Q10–Q12)
+================================================================================
+
+5.1 DATA VALIDATION CHECKLIST
+
+☐ Satisfaction_Score: 1–5 range, no nulls, filled blanks with median
+  Verify: Column Profile > Min=1, Max=5, Null%=0
+
+☐ Total_Revenue: Non-negative, realistic ranges (validate outliers)
+  Verify: Column Profile > No negative values; 99th percentile reasonable
+
+☐ Monthly_Charges: > 0 (all customers), match contract types
+  Verify: Data view > sample rows; spot-check pricing by contract
+
+☐ All dimensions present for segmentation (Age, Contract, Region, etc.)
+  Verify: Data view > all columns from Chunks 3–4 present
+
+☐ Churn_Risk_Profile calculated and validated (from Chunk 4)
+  Verify: Data view > column shows values (Critical, High, Medium, Low)
+
+5.2 MEASURE VALIDATION (Spot-Check)
+
+Test [Total Revenue Lost (Churned)]:
+  1. Export churned customers to Excel
+  2. Sum their Total_Revenue
+  3. Compare to Power BI measure
+  
+  EXPECTED: Excel total ≈ PBI measure (±0 rounding)
+
+Test [MRR Lost to Churn]:
+  1. Create pivot: Churn_Flag, SUM(Monthly_Charges)
+  2. Filter: Churn_Flag = TRUE
+  3. Compare to Power BI measure result
+  
+  EXPECTED: Match exactly
+
+Test [Avg LTV] by segment:
+  1. Manual: Segment → Avg(Total_Revenue)
+  2. Compare to Power BI card showing [Avg LTV] by segment filter
+  
+  EXPECTED: Within ±$10 (acceptable rounding)
+
+5.3 VISUAL VALIDATION CHECKLIST
+
+☐ KPI CARDS
+  ☐ All 6 cards display correct values / targets / status colors
+  ☐ Comparison indicators (↑↓) point correctly (red up = bad for churn, green down = good)
+  ☐ Filters update card values: Change month, values refresh
+
+☐ GAUGE CHART
+  ☐ Needle at correct angle (3.7/5.0 = 74% of gauge)
+  ☐ Color zones visible (red left, yellow mid, green right)
+  ☐ Min/Max labeled (1 on left, 5 on right)
+  ☐ Target line visible at 4.0
+
+☐ STACKED COLUMN
+  ☐ Green area (satisfied) shows ≥60% of bar
+  ☐ Yellow area (neutral) shows ~20–25%
+  ☐ Red area (dissatisfied) shows ≤15%
+  ☐ 12 months visible on X-axis (Jan–Dec or 12-month range)
+  ☐ Trend: Green increasing or stable (good)
+
+☐ HEATMAP (Risk Matrix)
+  ☐ Darkest red at 18–25 + Monthly combination
+  ☐ Darkest green at 45+ + Annual combination
+  ☐ Values in cells show churn % accurately
+  ☐ Row/column headers correct (Age groups, Contract types)
+
+☐ WATERFALL
+  ☐ Starting bar (baseline) at correct MRR value
+  ☐ Red down bars (churn) show negative values
+  ☐ Green up bars (new adds) show positive values
+  ☐ Ending bar shows net result
+  ☐ Connector lines visible between bars
+
+☐ DETAIL TABLE
+  ☐ Rows: All segments visible; sortable/filterable
+  ☐ Columns: All 7–8 columns present (Count, Churned, Churn %, Rev Loss, etc.)
+  ☐ TOTAL row: Sums match individual segment sums
+  ☐ Conditional formatting applied: High churn % = red, low = green
+
+5.4 ACCEPTANCE CRITERIA FOR Q10–Q12
+
+CRITERION 1: SATISFACTION ANALYSIS (Q10)
+✓ Gauge shows satisfaction score 3.7/5.0 (or current value)
+✓ Satisfaction trend chart shows 12-month pattern (improving/declining/stable)
+✓ Stacked distribution shows ~60% satisfied, ~20% neutral, ~20% dissatisfied (typical)
+✓ Satisfaction <2 customers show >30% churn (satisfaction-churn link confirmed)
+PASS WHEN: Satisfaction metrics reliable and linked to churn rate visually/numerically
+
+CRITERION 2: RISK SEGMENTATION (Q11)
+✓ Heatmap shows clear risk gradient (darkest red at 18–25/Monthly, brightest green at 45+/Annual)
+✓ Highest-risk segment is 3x churn rate of lowest-risk segment
+✓ Revenue at Risk measure quantified (e.g., $15,000 critical risk monthly charges)
+✓ At-risk customer count updated daily; high-risk list is actionable (CSM assignment possible)
+PASS WHEN: Risk matrix clearly identifies priority segments for retention investment
+
+CRITERION 3: FINANCIAL IMPACT (Q12)
+✓ Total Revenue Lost (churned) calculated correctly: Excel match ±0
+✓ MRR Lost to Churn quantified: Annual projection matches (MRR × 12)
+✓ Waterfall chart shows prior MRR → churn loss → new adds → current MRR
+✓ ROI case documented: Cost of CS vs. revenue saved from churn reduction
+PASS WHEN: Financial impact translated to business case (e.g., "Invest $50K to save $135K")
+
+================================================================================
+SECTION 6: EXPECTED INSIGHTS & BUSINESS OUTCOMES (Q10–Q12)
+================================================================================
+
+6.1 QUESTION 10: SATISFACTION & CHURN LINKAGE
+
+Expected Insight:
+  - Churn rate by satisfaction score:
+    • Satisfaction 5/5: 2% churn (highly loyal)
+    • Satisfaction 4/5: 5% churn (satisfied)
+    • Satisfaction 3/5: 18% churn (neutral, at-risk) ← CLIFF
+    • Satisfaction 2/5: 35% churn (dissatisfied)
+    • Satisfaction 1/5: 60% churn (very dissatisfied, almost certain to leave)
+  
+  - Current organization: Avg sat 3.7 = ~12% implied churn (reasonably healthy)
+  - Satisfaction slight leading indicator (drops 2–4 weeks before churn)
+
+Business Action:
+  1. Satisfaction monitoring:
+     - Monthly CSAT survey (post-interaction, NPS/CSAT)
+     - Alert: If org-wide avg drops below 3.5, escalate (churn risk rising)
+     - Segment alerts: If segment avg drops 1+ point, investigate
+
+  2. Targeted improvement:
+     - For satisfaction 1–2 customers: Immediate outreach
+       "We see your experience has been below expectations. Here's how we can help:…"
+       Goal: Bring from 1–2 → 3–4 satisfaction (reduce churn 60% → 5%)
+
+     - For satisfaction 3 (neutral): Engagement campaigns
+       "Here are your top features. Did you know about [advanced feature]?"
+       Goal: Increase to satisfaction 4 (reduce churn 18% → 5%)
+
+  3. CS team training:
+     - Tie CS metrics to satisfaction (not just ticket count)
+     - Resolution quality > speed (happier customers at satisfaction 4)
+     - Measure: Repeat issues (indicate poor resolution)
+
+Expected Business Outcome:
+  - Improve org-wide satisfaction from 3.7 → 4.0 within 6 months (via improvements above)
+  - Churn reduction: Each 0.3-point improvement = ~1% churn reduction
+  - Target: 4.0 satisfaction → 10–12% churn (3–5 percentage point reduction)
+
+6.2 QUESTION 11: RISK SEGMENTATION & PRIORITIZATION
+
+Expected Insight:
+  - Portfolio breakdown:
+    • 18–25, Monthly, Cash: 28.3% churn, $15K/month charges @ risk (highest priority)
+    • 26–35, Monthly, Debit: 18.5% churn, $8K/month charges @ risk (2nd priority)
+    • 36–45, Quarterly, CC: 9.3% churn, $3K/month charges @ risk (3rd priority)
+    • 45+, Annual, CC: 2.1% churn, $2K/month charges @ risk (low priority)
+  
+  - **Revenue-weighted** risk: 10% of segments drive 40% of churn losses (Pareto)
+  - Focus on top 3–4 segments = 80% of impact
+
+Business Action:
+  1. Segment-specific playbooks:
+     - 18–25 (highest risk): Intensive onboarding, gamification, daily touchpoints first week
+     - 26–35 (medium risk): Standard onboarding + QBR at month 6, cross-sell at month 9
+     - 36–45 (lower risk): Light touch + value updates quarterly
+     - 45+ (low risk): Renewal focus only, premium support offer
+
+  2. Resource allocation:
+     - If 10 CS managers, allocate:
+       • 5 to highest-risk segment (ROI per manager highest here)
+       • 3 to medium-risk
+       • 2 to lower-risk
+
+  3. Pricing/contract strategy:
+     - 18–25 Monthly: Offer "3-month trials at annual pricing" (reduce churn 28% → 15%)
+     - 26–35 Monthly: Offer quarterly commitment + 10% discount (reduce churn 18% → 12%)
+     - Older cohorts: Reduce discount (already low-risk)
+
+Expected Business Outcome:
+  - Reduce high-risk segment churn from 28.3% to 18% within 1 year (via targeted retention)
+  - Revenue impact: 280 customers @ $45/mo = $12.6K/month saved
+  - Total portfolio churn: 17% → 15% (2% overall reduction, ~$50K/year ARR impact)
+
+6.3 QUESTION 12: FINANCIAL IMPACT & BUSINESS CASE
+
+Expected Insight (Example Numbers):
+  
+  Current State:
+    - 4,000 active customers
+    - 679 churned in period (17% churn rate)
+    - Avg revenue per customer: $75/month
+    - Total MRR lost to churn: 679 @ $75 = $50,925/month = $611,100 ARR
+
+  Projected Annual Impact:
+    - If churn continues at 17%, lose $611K annual revenue
+    - Equivalent to: 611K / 1000 customers = $611 avg revenue per customer per year lost
+
+  LTV Impact:
+    - Avg customer tenure: 18 months
+    - Avg LTV: $75/mo × 18 mo = $1,350 per customer
+    - Lost value from churn: 679 churned × $1,350 = $917,000
+
+Investment Case:
+    - CS team cost: $150K/year (3 FTE @ $50K each)
+    - If CS reduces churn from 17% → 14% (3% reduction):
+      Saved customers = 4,000 × 0.03 = 120 retained
+      Revenue saved = 120 × $900 (yearly value) = $108,000
+      ROI = ($108K revenue saved - $150K cost) / $150K = -28% (negative)
+    
+    - If CS reduces churn from 17% → 12% (5% reduction):
+      Saved customers = 4,000 × 0.05 = 200 retained
+      Revenue saved = 200 × $900 = $180,000
+      ROI = ($180K - $150K) / $150K = +20% (positive, justifies investment)
+
+Business Action:
+  1. Investment justification:
+     - "Current churn costs $611K/year"
+     - "$150K CS investment can prevent 30% of churn (save $180K+)"
+     - "ROI breakeven: 5% churn reduction" (achievable via onboarding + support improvements)
+
+  2. Monitor unit economics:
+     - CAC payback period: 3–6 months (depending on $churn savings)
+     - If initial acquisition cost $200/customer, payback = 3–4 months (healthy)
+     - Focus on reducing churn in first 6 months (highest payback impact)
+
+  3. Scenario modeling:
+     - Model A: Invest $150K in CS → reduce churn 5% → save $180K (ROI +20%)
+     - Model B: Invest $50K in product improvements → reduce churn 2% → save $72K (ROI +44%)
+     - Model C: Invest $80K in both → reduce churn 7% → save $252K (ROI +96%, optimal)
+
+Expected Business Outcome:
+  - Business case approved: Invest in CS + product improvements
+  - Churn reduction target: 17% → 12% (5% overall reduction, $180K+/year)
+  - LTV improvement: $1,350 → $1,575 (+16.7% per customer)
+  - 2-year financial impact: Cumulative $450K+ revenue retention
+
+================================================================================
+SECTION 7: TRANSITION TO CHUNK 6 (FINAL)
+================================================================================
+
+NEXT STEPS:
+Chunk 6 (final) will cover:
+  - Questions 13–14 (Q13: Early warnings; Q14: Price sensitivity)
+  - PROJECT-LEVEL CHECKLIST: Milestones, effort estimates, go-live plan
+  - DATA GAPS & QUESTIONS: Missing info to clarify with business
+  - BEST PRACTICES & NAMING CONVENTIONS: Standards across all 14 questions
+  - APPENDIX: DAX snippets, Power Query M templates, sample formulas
+
+Deliverable: Power_BI_Implementation_Guide_CHUNK_6 (final TXT)
+  - Consolidates Chunks 1–5 into master guide
+  - Adds supporting sections
+  - Ready for hand-off to Power BI team or external stakeholders
+
+================================================================================
+END OF CHUNK 5 - CUSTOMER EXPERIENCE & FINANCIAL IMPACT
+================================================================================

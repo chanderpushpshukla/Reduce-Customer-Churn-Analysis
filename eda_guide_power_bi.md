@@ -60,9 +60,65 @@ Below are 12 key business questions for churn analysis. Each includes the busine
 
 2. **Business Question:** How has churn trended over time?
    - **Business Intent:** Identify seasonal patterns or growth in churn to time interventions.
-   - **Metrics Required:** Churn Rate by Report_Month.
-   - **Recommended Visual:** Line Chart.
-   - **Power BI Build Steps:** X-axis: Report_Month; Y-axis: Churn Rate. Add trend line via "Analytics" pane.
+   - **Metrics Required:** Monthly Churn Rate (derived from `Churn_Date`).
+   - **Recommended Visual:** Line Chart (Month on X, Churn Rate on Y).
+
+   - **Step-by-step (simple & repeatable):**
+
+     1. **Make sure date columns are Date type**
+        - Power Query: select `Join_Date` and `Churn_Date` -> Transform -> Data Type -> **Date**.
+
+     2. **Create `Churn_Month` (Power Query) — quick UI**
+        - Add Column -> Custom Column -> Name: `Churn_Month`.
+        - Formula: `if [Churn_Date] <> null then Date.ToText([Churn_Date], "yyyy-MM") else null`.
+        - Optional (better sorting): use `Date.StartOfMonth([Churn_Date])` to create a Date value for month start.
+
+     3. **(Alternative) DAX calculated column**
+        - If you prefer creating it in the model instead: `Churn_Month = IF(NOT(ISBLANK('fact_customer_churn'[Churn_Date])), FORMAT('fact_customer_churn'[Churn_Date], "yyyy-MM"), BLANK())`
+
+     4. **Create a Calendar (Date) table**
+        - Modeling -> New Table -> paste:
+          `Calendar = CALENDAR(MIN('fact_customer_churn'[Join_Date]), MAX('fact_customer_churn'[Churn_Date]))`
+        - Add `YearMonth` column: `YearMonth = FORMAT('Calendar'[Date], "yyyy-MM")`
+        - Mark as Date table: Table tools -> Mark as Date Table -> select `Date`.
+
+     5. **Set relationships**
+        - Prefer: link `Calendar[Date]` -> `fact_customer_churn[Churn_Date]` (single, inactive months without churns will still show with Calendar).
+        - If you used text `Churn_Month`, link `Calendar[YearMonth]` -> `fact_customer_churn[Churn_Month]`.
+
+     6. **Create measures (copy/paste DAX)**
+        - Monthly Churns =
+          `CALCULATE(COUNTROWS('fact_customer_churn'), NOT(ISBLANK('fact_customer_churn'[Churn_Date])))`
+
+        - Customers at Month End =
+          `CALCULATE(DISTINCTCOUNT('fact_customer_churn'[Customer_ID]), FILTER('fact_customer_churn', 'fact_customer_churn'[Join_Date] <= MAX('Calendar'[Date]) && (ISBLANK('fact_customer_churn'[Churn_Date]) || 'fact_customer_churn'[Churn_Date] > MAX('Calendar'[Date]))))`
+
+        - Monthly Churn Rate = `DIVIDE([Monthly Churns], [Customers at Month End])`
+
+     7. **Build the Line Chart**
+        - Visual: Line chart
+        - Axis: `Calendar[YearMonth]` (sort by `Calendar[Date]`)
+        - Values: `Monthly Churn Rate`
+        - Analytics: add a Trend line to see direction.
+
+     8. **Quick checks & tips**
+        - Fast check: use `Churn_Month` on X and `Monthly Churns` as value to spot seasonality quickly (counts vs rates).
+        - Confirm date coverage: filter Calendar by year to inspect recent months.
+        - If months have no churns, using the `Calendar` ensures they still appear on the axis.
+
+   - **Copyable Power Query M (minimal)**
+
+```m
+let
+  Source = Csv.Document(File.Contents("fact_customer_churn.csv"), [Delimiter=",", Columns=12, Encoding=1252, QuoteStyle=QuoteStyle.Csv]),
+  #"Promoted Headers" = Table.PromoteHeaders(Source, [PromoteAllScalars=true]),
+  #"Changed Type" = Table.TransformColumnTypes(#"Promoted Headers",{{"Churn_Date", type date}}),
+  #"Added Churn_Month" = Table.AddColumn(#"Changed Type", "Churn_Month", each if [Churn_Date] <> null then Date.ToText([Churn_Date], "yyyy-MM") else null, type text)
+in
+  #"Added Churn_Month"
+```
+
+   - **Why this works:** deriving month from `Churn_Date` and using a Calendar table gives an accurate, time-ordered churn rate (accounts at risk are considered), and makes trends and seasonality easy to spot and communicate.
 
 3. **Business Question:** Which regions have the highest churn?
    - **Business Intent:** Target regional marketing or support to reduce geographic churn.
